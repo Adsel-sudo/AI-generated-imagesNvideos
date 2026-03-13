@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -6,7 +7,7 @@ from sqlmodel import Session, desc, select
 
 from .config import settings
 from .db import engine
-from .models import Output, Task
+from .models import Output, Task, utcnow
 from .schemas import CreateTaskRequest
 from .tasks import mock_generate_task
 
@@ -23,16 +24,25 @@ def create_task(payload: CreateTaskRequest):
     with Session(engine) as session:
         task = Task(
             type=payload.type,
+            provider=payload.provider,
+            params_json=json.dumps(payload.params, ensure_ascii=False),
             request_text=payload.request_text,
             n_outputs=payload.n_outputs,
-            status="queued",
+            status="pending",
         )
         session.add(task)
         session.commit()
         session.refresh(task)
 
-    mock_generate_task.delay(task.id)
-    return task
+        celery_result = mock_generate_task.delay(task.id)
+        task.status = "queued"
+        task.celery_task_id = celery_result.id
+        task.updated_at = utcnow()
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+
+        return task
 
 
 @router.get("/api/tasks")
