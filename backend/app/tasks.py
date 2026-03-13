@@ -1,21 +1,10 @@
-import random
 import time
-from pathlib import Path
-
-from PIL import Image, ImageDraw
 from sqlmodel import Session, select
 
 from .celery_app import celery_app
-from .config import settings
 from .db import engine
 from .models import Output, Task, utcnow
-
-
-def _make_fake_png(path: Path, label: str) -> None:
-    image = Image.new("RGB", (512, 512), color=(random.randint(20, 235), random.randint(20, 235), random.randint(20, 235)))
-    draw = ImageDraw.Draw(image)
-    draw.text((20, 20), label, fill=(255, 255, 255))
-    image.save(path, format="PNG")
+from .providers.router import get_provider
 
 
 @celery_app.task(name="mock_generate_task")
@@ -30,18 +19,24 @@ def mock_generate_task(task_id: str):
         session.commit()
 
     try:
-        time.sleep(random.uniform(3, 5))
+        time.sleep(1)
         with Session(engine) as session:
             task = session.get(Task, task_id)
             if not task:
                 return
-            out_dir = settings.data_dir / "outputs" / task_id
-            out_dir.mkdir(parents=True, exist_ok=True)
+            provider = get_provider(task.provider)
+            generated_outputs = provider.generate(task)
 
-            for i in range(task.n_outputs):
-                output_path = out_dir / f"output_{i+1}.png"
-                _make_fake_png(output_path, f"task={task_id}\nidx={i+1}")
-                output = Output(task_id=task_id, index=i + 1, file_path=str(output_path), mime_type="image/png")
+            for item in generated_outputs:
+                output = Output(
+                    task_id=task_id,
+                    index=item["index"],
+                    file_path=item["file_path"],
+                    mime_type=item.get("mime_type", "image/png"),
+                    file_type=item.get("file_type"),
+                    file_name=item.get("file_name"),
+                    file_size=item.get("file_size"),
+                )
                 session.add(output)
 
             task.status = "done"
