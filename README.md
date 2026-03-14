@@ -44,15 +44,38 @@ Expected:
 
 ## API examples
 
-### Create task
+### Mock image task
+
+### Create task (google image)
 
 ```bash
 curl -u admin:admin123 -X POST http://localhost:8080/api/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "type": "image",
+    "provider": "google_image",
     "request_text": "a cute cat",
-    "n_outputs": 6
+    "n_outputs": 1,
+    "params": {
+      "size": "1024x1024",
+      "style": "poster",
+      "seed": 12345
+    }
+  }'
+```
+
+### Prompt optimizer task
+
+```bash
+curl -u admin:admin123 -X POST http://localhost:8080/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "prompt",
+    "provider": "prompt_optimizer",
+    "request_text": "a cinematic sunset city skyline",
+    "params": {
+      "style": "cinematic"
+    }
   }'
 ```
 
