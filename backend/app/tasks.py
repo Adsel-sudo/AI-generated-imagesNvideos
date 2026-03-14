@@ -25,6 +25,7 @@ def mock_generate_task(task_id: str):
             if not task:
                 return
             provider = get_provider(task.provider)
+            provider.validate_task_type(task)
             generated_outputs = provider.generate(task)
 
             for item in generated_outputs:
