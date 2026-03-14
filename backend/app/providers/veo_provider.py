@@ -4,6 +4,7 @@ from .types import ProviderResultItem
 
 
 class VeoProvider(BaseProvider):
+    name = "veo"
     supports_image = False
     supports_video = True
 

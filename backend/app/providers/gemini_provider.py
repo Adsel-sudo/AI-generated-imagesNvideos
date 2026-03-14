@@ -4,6 +4,7 @@ from .types import ProviderResultItem
 
 
 class GeminiProvider(BaseProvider):
+    name = "gemini"
     supports_image = True
     supports_video = False
 
