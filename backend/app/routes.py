@@ -1,15 +1,18 @@
-from pathlib import Path
 import json
+import zipfile
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from sqlmodel import Session, desc, select
 
-from .config import settings
+from .constants import DEFAULT_PROVIDER
 from .db import engine
+from .enums import TaskStatus
 from .models import Output, Task, utcnow
 from .schemas import CreateTaskRequest
-from .tasks import mock_generate_task
+from .storage import get_task_zip_path
+from .tasks import generate_task
 
 router = APIRouter()
 
@@ -24,18 +27,17 @@ def create_task(payload: CreateTaskRequest):
     with Session(engine) as session:
         task = Task(
             type=payload.type,
-            provider=payload.provider or "mock",
+            provider=payload.provider or DEFAULT_PROVIDER,
             params_json=json.dumps(payload.params, ensure_ascii=False),
             request_text=payload.request_text,
             n_outputs=payload.n_outputs,
-            status="pending",
+            status=TaskStatus.QUEUED.value,
         )
         session.add(task)
         session.commit()
         session.refresh(task)
 
-        celery_result = mock_generate_task.delay(task.id)
-        task.status = "queued"
+        celery_result = generate_task.delay(task.id)
         task.celery_task_id = celery_result.id
         task.updated_at = utcnow()
         session.add(task)
@@ -59,9 +61,7 @@ def get_task(task_id: str):
         if not task:
             raise HTTPException(status_code=404, detail="task not found")
 
-        outputs = session.exec(
-            select(Output).where(Output.task_id == task_id).order_by(Output.index)
-        ).all()
+        outputs = session.exec(select(Output).where(Output.task_id == task_id).order_by(Output.index)).all()
 
         return {
             **task.model_dump(),
@@ -85,22 +85,22 @@ def download_output(task_id: str, output_id: str):
 
 @router.get("/api/tasks/{task_id}/download.zip")
 def download_zip(task_id: str):
-    task_output_dir = settings.data_dir / "outputs" / task_id
-    if not task_output_dir.exists():
-        raise HTTPException(status_code=404, detail="task output dir not found")
+    with Session(engine) as session:
+        task = session.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="task not found")
 
-    zip_dir = settings.data_dir / "zips"
-    zip_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = zip_dir / f"{task_id}.zip"
+        outputs = session.exec(select(Output).where(Output.task_id == task_id).order_by(Output.index)).all()
 
+    valid_files = [Path(output.file_path) for output in outputs if output.file_path and Path(output.file_path).exists()]
+    if not valid_files:
+        raise HTTPException(status_code=404, detail="no output files found")
+
+    zip_path = get_task_zip_path(task_id)
     if not zip_path.exists():
-        import zipfile
-
+        zip_path.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for file in sorted(task_output_dir.glob("*.png")):
+            for file in valid_files:
                 zf.write(file, arcname=file.name)
-
-    if not zip_path.exists():
-        raise HTTPException(status_code=404, detail="zip not found")
 
     return FileResponse(path=zip_path, media_type="application/zip", filename=f"{task_id}.zip")

@@ -1,9 +1,10 @@
 import json
+from typing import Any
 
 from ..models import Task
 
 
-def load_task_params(task: Task) -> dict:
+def load_task_params(task: Task) -> dict[str, Any]:
     if not task.params_json:
         return {}
 

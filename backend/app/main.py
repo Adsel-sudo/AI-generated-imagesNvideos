@@ -1,16 +1,15 @@
 from fastapi import FastAPI
 
-from .config import settings
 from .db import init_db
 from .routes import router
+from .storage import ensure_data_dirs
 
 app = FastAPI(title="AI generated images/videos mock platform")
 
 
 @app.on_event("startup")
 def startup_event() -> None:
-    for folder in ["uploads", "outputs", "zips", "logs", "db"]:
-        (settings.data_dir / folder).mkdir(parents=True, exist_ok=True)
+    ensure_data_dirs()
     init_db()
 
 

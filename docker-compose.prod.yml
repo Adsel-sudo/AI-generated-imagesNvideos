@@ -1,0 +1,26 @@
+services:
+  api:
+    environment:
+      DATABASE_URL: postgresql+psycopg://aigenerated:aigenerated@postgres:5432/aigenerated
+    depends_on:
+      - redis
+      - postgres
+
+  worker:
+    environment:
+      DATABASE_URL: postgresql+psycopg://aigenerated:aigenerated@postgres:5432/aigenerated
+    depends_on:
+      - redis
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: aigenerated
+      POSTGRES_USER: aigenerated
+      POSTGRES_PASSWORD: aigenerated
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

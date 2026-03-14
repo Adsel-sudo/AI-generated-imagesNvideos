@@ -5,15 +5,15 @@ from PIL import Image, ImageDraw
 
 from ..config import settings
 from ..models import Task
+from ..provider_params import normalize_task_params
 from .base import BaseProvider
 from .types import ProviderResultItem
-from .utils import load_task_params
 
 
-def _make_fake_png(path: Path, label: str) -> None:
+def _make_fake_png(path: Path, label: str, width: int, height: int) -> None:
     image = Image.new(
         "RGB",
-        (512, 512),
+        (width, height),
         color=(random.randint(20, 235), random.randint(20, 235), random.randint(20, 235)),
     )
     draw = ImageDraw.Draw(image)
@@ -27,19 +27,22 @@ class MockProvider(BaseProvider):
     supports_video = False
 
     def generate(self, task: Task) -> list[ProviderResultItem]:
-        params = load_task_params(task)
+        params = normalize_task_params(task)
 
-        out_dir = settings.data_dir / "outputs" / task.id
+        out_dir = settings.outputs_dir / task.id
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        width = params.width or 512
+        height = params.height or 512
 
         outputs: list[ProviderResultItem] = []
         for i in range(task.n_outputs):
             index = i + 1
             output_path = out_dir / f"output_{index}.png"
             label = f"task={task.id}\nidx={index}"
-            if params:
-                label = f"{label}\nparams={params}"
-            _make_fake_png(output_path, label)
+            if params.model_dump(exclude_none=True):
+                label = f"{label}\nparams={params.model_dump(exclude_none=True)}"
+            _make_fake_png(output_path, label, width, height)
 
             outputs.append(
                 ProviderResultItem(
@@ -49,6 +52,8 @@ class MockProvider(BaseProvider):
                     file_type="image",
                     file_name=output_path.name,
                     file_size=output_path.stat().st_size,
+                    width=width,
+                    height=height,
                 )
             )
 

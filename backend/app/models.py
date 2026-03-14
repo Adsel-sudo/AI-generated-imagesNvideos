@@ -4,6 +4,8 @@ from uuid import uuid4
 
 from sqlmodel import Field, SQLModel
 
+from .enums import TaskStatus, TaskType
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -11,8 +13,8 @@ def utcnow() -> datetime:
 
 class Task(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    type: str
-    status: str = "pending"
+    type: str = Field(default=TaskType.IMAGE.value)
+    status: str = Field(default=TaskStatus.QUEUED.value, index=True)
     provider: Optional[str] = None
     params_json: Optional[str] = None
     celery_task_id: Optional[str] = None
@@ -36,4 +38,8 @@ class Output(SQLModel, table=True):
     file_type: Optional[str] = None
     file_name: Optional[str] = None
     file_size: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    checksum: Optional[str] = None
     created_at: datetime = Field(default_factory=utcnow)

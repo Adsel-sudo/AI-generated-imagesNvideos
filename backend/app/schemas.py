@@ -3,10 +3,27 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from .constants import DEFAULT_PROVIDER
+from .enums import TaskType
+
+
+class StandardTaskParams(BaseModel):
+    # Unified platform-level params. Providers can map from this schema to backend-specific args.
+    size: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    aspect_ratio: Optional[str] = None
+    style: Optional[str] = None
+    seed: Optional[int] = None
+    negative_prompt: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    fps: Optional[int] = None
+    extra: dict[str, Any] = Field(default_factory=dict)
+
 
 class CreateTaskRequest(BaseModel):
-    type: str = Field(default="image")
-    provider: Optional[str] = Field(default="mock")
+    type: str = Field(default=TaskType.IMAGE.value)
+    provider: Optional[str] = Field(default=DEFAULT_PROVIDER)
     params: dict[str, Any] = Field(default_factory=dict)
     request_text: str
     n_outputs: int = Field(default=1, ge=1, le=12)
@@ -21,6 +38,10 @@ class OutputResponse(BaseModel):
     file_type: Optional[str] = None
     file_name: Optional[str] = None
     file_size: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    checksum: Optional[str] = None
     created_at: datetime
 
 

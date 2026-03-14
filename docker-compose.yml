@@ -25,6 +25,18 @@ services:
   redis:
     image: redis:7-alpine
 
+  # Optional PostgreSQL service for long-running/AWS-style environments.
+  # Enable with: docker compose --profile postgres up --build
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: aigenerated
+      POSTGRES_USER: aigenerated
+      POSTGRES_PASSWORD: aigenerated
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
   nginx:
     image: nginx:1.27-alpine
     ports:
@@ -34,3 +46,6 @@ services:
       - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
     depends_on:
       - api
+
+volumes:
+  postgres_data:
