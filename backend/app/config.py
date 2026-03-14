@@ -14,8 +14,10 @@ class Settings(BaseSettings):
     zips_dir: Path = Path("data/zips")
     logs_dir: Path = Path("data/logs")
 
-    # Provider defaults for future real integrations.
-    google_image_backend: str = "mock"
+    # Google provider settings.
+    google_api_key: str | None = None
+    google_genai_api_key: str | None = None
+    google_image_backend: str = "google_genai"
     google_image_model: str = "gemini-2.0-flash-preview-image-generation"
     google_video_model: str = "veo-2.0-generate"
     prompt_optimizer_model: str = "gemini-2.0-flash"

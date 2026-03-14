@@ -1,7 +1,7 @@
+import json
 from typing import Any
 
 from .models import Task
-from .providers.utils import load_task_params
 from .schemas import StandardTaskParams
 
 STANDARD_PARAM_KEYS = {
@@ -19,8 +19,16 @@ STANDARD_PARAM_KEYS = {
 
 
 def normalize_task_params(task: Task) -> StandardTaskParams:
-    """Build normalized params from legacy task.params_json with compatibility fallbacks."""
-    raw = load_task_params(task)
+    """Build normalized params from task.params_json with compatibility fallbacks."""
+    raw: dict[str, Any] = {}
+    if task.params_json:
+        try:
+            parsed = json.loads(task.params_json)
+            if isinstance(parsed, dict):
+                raw = parsed
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raw = {}
+
     if not isinstance(raw, dict):
         return StandardTaskParams()
 

@@ -3,8 +3,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from .constants import DEFAULT_PROVIDER
-from .enums import TaskType
+from .constants import DEFAULT_N_OUTPUTS, DEFAULT_PROVIDER, DEFAULT_TASK_TYPE
 
 
 class StandardTaskParams(BaseModel):
@@ -22,11 +21,12 @@ class StandardTaskParams(BaseModel):
 
 
 class CreateTaskRequest(BaseModel):
-    type: str = Field(default=TaskType.IMAGE.value)
+    # Defaults are centralized in constants so API defaults can evolve with settings in one place.
+    type: str = Field(default=DEFAULT_TASK_TYPE)
     provider: Optional[str] = Field(default=DEFAULT_PROVIDER)
     params: dict[str, Any] = Field(default_factory=dict)
     request_text: str
-    n_outputs: int = Field(default=1, ge=1, le=12)
+    n_outputs: int = Field(default=DEFAULT_N_OUTPUTS, ge=1, le=12)
 
 
 class OutputResponse(BaseModel):
@@ -61,4 +61,4 @@ class TaskResponse(BaseModel):
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     error_message: Optional[str] = None
-    outputs: list[OutputResponse] = []
+    outputs: list[OutputResponse] = Field(default_factory=list)

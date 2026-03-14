@@ -1,20 +1,12 @@
-from ..config import settings
 from ..models import Task
-from .base import BaseProvider
+from .google_image_provider import GoogleImageProvider
 from .types import ProviderResultItem
 
 
-class GeminiProvider(BaseProvider):
-    """Legacy alias provider. Keep this for compatibility with existing `provider=gemini` requests.
-
-    Future plan: route this alias to GoogleImageProvider implementation.
-    """
+class GeminiProvider(GoogleImageProvider):
+    """Legacy alias adapter for `provider=gemini` requests."""
 
     name = "gemini"
-    supports_image = True
-    supports_video = False
 
     def generate(self, task: Task) -> list[ProviderResultItem]:
-        raise NotImplementedError(
-            f"[provider={self.name}][stage=generate] not implemented, default model={settings.google_image_model}"
-        )
+        return GoogleImageProvider.generate(self, task)
