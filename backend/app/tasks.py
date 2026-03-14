@@ -30,12 +30,12 @@ def mock_generate_task(task_id: str):
             for item in generated_outputs:
                 output = Output(
                     task_id=task_id,
-                    index=item["index"],
-                    file_path=item["file_path"],
-                    mime_type=item.get("mime_type", "image/png"),
-                    file_type=item.get("file_type"),
-                    file_name=item.get("file_name"),
-                    file_size=item.get("file_size"),
+                    index=item.index,
+                    file_path=item.file_path,
+                    mime_type=item.mime_type,
+                    file_type=item.file_type,
+                    file_name=item.file_name,
+                    file_size=item.file_size,
                 )
                 session.add(output)
 

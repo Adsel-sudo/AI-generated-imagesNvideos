@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw
 from ..config import settings
 from ..models import Task
 from .base import BaseProvider
+from .types import ProviderResultItem
 
 
 def _make_fake_png(path: Path, label: str) -> None:
@@ -20,25 +21,28 @@ def _make_fake_png(path: Path, label: str) -> None:
 
 
 class MockProvider(BaseProvider):
-    def generate(self, task: Task) -> list[dict]:
+    supports_image = True
+    supports_video = True
+
+    def generate(self, task: Task) -> list[ProviderResultItem]:
         out_dir = settings.data_dir / "outputs" / task.id
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        outputs: list[dict] = []
+        outputs: list[ProviderResultItem] = []
         for i in range(task.n_outputs):
             index = i + 1
             output_path = out_dir / f"output_{index}.png"
             _make_fake_png(output_path, f"task={task.id}\nidx={index}")
 
             outputs.append(
-                {
-                    "file_path": str(output_path),
-                    "mime_type": "image/png",
-                    "file_type": "image",
-                    "file_name": output_path.name,
-                    "file_size": output_path.stat().st_size,
-                    "index": index,
-                }
+                ProviderResultItem(
+                    index=index,
+                    file_path=str(output_path),
+                    mime_type="image/png",
+                    file_type="image",
+                    file_name=output_path.name,
+                    file_size=output_path.stat().st_size,
+                )
             )
 
         return outputs
