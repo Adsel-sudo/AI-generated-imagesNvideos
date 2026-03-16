@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
-from pathlib import Path
+import re
 from typing import Any
 
 from PIL import Image
@@ -42,13 +42,22 @@ class GoogleImageProvider(BaseProvider):
             lines.append(f"Avoid: {params.negative_prompt}")
         return "\n".join(line for line in lines if line)
 
+    def _normalize_aspect_ratio(self, raw: str | None) -> str | None:
+        if not raw:
+            return None
+        value = raw.strip().lower()
+        if re.fullmatch(r"\d+\s*:\s*\d+", value):
+            left, _, right = value.partition(":")
+            return f"{left.strip()}:{right.strip()}"
+        return None
+
     def _build_config(self, task: Task) -> Any:
         params = normalize_task_params(task)
         extra = dict(params.extra or {})
 
         response_modalities = ["IMAGE"]
         if genai_types is None:
-            return {"candidate_count": task.n_outputs, **extra}
+            return {"response_modalities": response_modalities, "candidate_count": task.n_outputs, **extra}
 
         cfg: dict[str, Any] = {
             "response_modalities": response_modalities,
@@ -57,10 +66,13 @@ class GoogleImageProvider(BaseProvider):
 
         if params.seed is not None:
             cfg["seed"] = params.seed
-        if params.aspect_ratio:
-            cfg["aspect_ratio"] = params.aspect_ratio
-        elif params.size:
-            cfg["aspect_ratio"] = params.size
+
+        aspect_ratio = self._normalize_aspect_ratio(params.aspect_ratio)
+        if not aspect_ratio:
+            aspect_ratio = self._normalize_aspect_ratio(params.size)
+        if aspect_ratio:
+            cfg["aspect_ratio"] = aspect_ratio
+
         cfg.update(extra)
         return genai_types.GenerateContentConfig(**cfg)
 
@@ -83,6 +95,7 @@ class GoogleImageProvider(BaseProvider):
                 f"[provider={self.name}][stage=import] google-genai is not installed or failed to import"
             )
 
+        # Prefer Gemini Developer API (API key auth).
         client = genai.Client(api_key=self._api_key())
         prompt_text = self._build_prompt(task)
         config = self._build_config(task)

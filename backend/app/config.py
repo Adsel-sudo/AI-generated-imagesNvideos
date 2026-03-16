@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     google_api_key: str | None = None
     google_genai_api_key: str | None = None
     google_image_backend: str = "google_genai"
-    google_image_model: str = "gemini-2.0-flash-preview-image-generation"
+    google_image_model: str = "gemini-3.1-flash-image-preview"
     google_video_model: str = "veo-2.0-generate"
     prompt_optimizer_model: str = "gemini-2.0-flash"
 
