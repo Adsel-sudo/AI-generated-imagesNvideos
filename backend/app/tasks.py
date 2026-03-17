@@ -80,7 +80,10 @@ def generate_task(task_id: str):
                     session,
                     task,
                     status=TaskStatus.FAILED,
-                    error_message=f"[provider={task.provider or 'unknown'}][stage=generate] {exc}",
+                    error_message=(
+                        f"[provider={task.provider or 'unknown'}][stage=generate]"
+                        f"[{type(exc).__name__}] {exc!r}"
+                    ),
                     finished=True,
                 )
                 session.commit()

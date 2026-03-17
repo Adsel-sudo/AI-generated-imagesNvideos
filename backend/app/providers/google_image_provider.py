@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import mimetypes
 import re
 from typing import Any
@@ -28,7 +29,9 @@ class GoogleImageProvider(BaseProvider):
     supports_image = True
 
     def _api_key(self) -> str:
-        api_key = settings.google_genai_api_key or settings.google_api_key
+        api_key = settings.google_genai_api_key
+        if not api_key:
+            api_key = settings.google_api_key
         if not api_key:
             raise ValueError(f"[provider={self.name}][stage=config] missing GOOGLE_GENAI_API_KEY/GOOGLE_API_KEY")
         return api_key
@@ -52,42 +55,67 @@ class GoogleImageProvider(BaseProvider):
         return None
 
     def _build_config(self, task: Task) -> Any:
-        params = normalize_task_params(task)
-        extra = dict(params.extra or {})
-
-        response_modalities = ["IMAGE"]
         if genai_types is None:
-            return {"response_modalities": response_modalities, "candidate_count": task.n_outputs, **extra}
+            return {}
 
-        cfg: dict[str, Any] = {
-            "response_modalities": response_modalities,
-            "candidate_count": task.n_outputs,
-        }
-
-        if params.seed is not None:
-            cfg["seed"] = params.seed
-
+        params = normalize_task_params(task)
         aspect_ratio = self._normalize_aspect_ratio(params.aspect_ratio)
         if not aspect_ratio:
             aspect_ratio = self._normalize_aspect_ratio(params.size)
+
         if aspect_ratio:
-            cfg["aspect_ratio"] = aspect_ratio
+            image_config = genai_types.ImageConfig(aspect_ratio=aspect_ratio)
+            return genai_types.GenerateContentConfig(image_config=image_config)
 
-        cfg.update(extra)
-        return genai_types.GenerateContentConfig(**cfg)
+        return genai_types.GenerateContentConfig()
 
-    def _extract_image_parts(self, response: Any) -> list[tuple[bytes, str]]:
-        images: list[tuple[bytes, str]] = []
+    def _extract_response_parts(self, response: Any) -> list[Any]:
+        parts = getattr(response, "parts", None) or []
+        if parts:
+            return list(parts)
+
         candidates = getattr(response, "candidates", None) or []
         for candidate in candidates:
             content = getattr(candidate, "content", None)
-            parts = getattr(content, "parts", None) or []
-            for part in parts:
-                inline_data = getattr(part, "inline_data", None)
-                if inline_data and getattr(inline_data, "data", None):
-                    mime_type = getattr(inline_data, "mime_type", None) or "image/png"
-                    images.append((inline_data.data, mime_type))
-        return images
+            candidate_parts = getattr(content, "parts", None) or []
+            if candidate_parts:
+                return list(candidate_parts)
+        return []
+
+    def _save_part_image(self, part: Any, file_path: Any) -> tuple[str, bool]:
+        mime_type = "image/png"
+
+        as_image = getattr(part, "as_image", None)
+        if callable(as_image):
+            try:
+                image_obj = as_image()
+                image_obj.save(file_path)
+                image_format = getattr(image_obj, "format", None)
+                if image_format:
+                    guessed = mimetypes.types_map.get(f".{image_format.lower()}")
+                    if guessed:
+                        mime_type = guessed
+                return mime_type, True
+            except Exception:  # noqa: BLE001
+                pass
+
+        inline_data = getattr(part, "inline_data", None)
+        data = getattr(inline_data, "data", None)
+        if not data:
+            return mime_type, False
+
+        mime_type = getattr(inline_data, "mime_type", None) or mime_type
+
+        if isinstance(data, bytes):
+            file_path.write_bytes(data)
+            return mime_type, True
+
+        if isinstance(data, str):
+            decoded = base64.b64decode(data)
+            file_path.write_bytes(decoded)
+            return mime_type, True
+
+        return mime_type, False
 
     def generate(self, task: Task) -> list[ProviderResultItem]:
         if genai is None:
@@ -95,7 +123,6 @@ class GoogleImageProvider(BaseProvider):
                 f"[provider={self.name}][stage=import] google-genai is not installed or failed to import"
             )
 
-        # Prefer Gemini Developer API (API key auth).
         client = genai.Client(api_key=self._api_key())
         prompt_text = self._build_prompt(task)
         config = self._build_config(task)
@@ -103,25 +130,41 @@ class GoogleImageProvider(BaseProvider):
         try:
             response = client.models.generate_content(
                 model=settings.google_image_model,
-                contents=prompt_text,
+                contents=[prompt_text],
                 config=config,
             )
         except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"[provider={self.name}][stage=generate] {exc}") from exc
+            raise RuntimeError(f"[provider={self.name}][stage=generate] [{type(exc).__name__}] {exc!r}") from exc
 
         output_dir = get_task_output_dir(task.id)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        images = self._extract_image_parts(response)
-        if not images:
-            raise RuntimeError(f"[provider={self.name}][stage=parse_response] no image data returned")
+        parts = self._extract_response_parts(response)
 
         results: list[ProviderResultItem] = []
-        for index, (blob, mime_type) in enumerate(images[: task.n_outputs], start=1):
-            ext = mimetypes.guess_extension(mime_type) or ".png"
+        for part in parts:
+            if len(results) >= task.n_outputs:
+                break
+
+            index = len(results) + 1
+            inline_data = getattr(part, "inline_data", None)
+            initial_mime_type = getattr(inline_data, "mime_type", None) or "image/png"
+            ext = mimetypes.guess_extension(initial_mime_type) or ".png"
+
             file_name = f"output_{index}{ext}"
             file_path = output_dir / file_name
-            file_path.write_bytes(blob)
+
+            mime_type, saved = self._save_part_image(part, file_path)
+            if not saved:
+                continue
+
+            final_ext = mimetypes.guess_extension(mime_type) or ext or ".png"
+            if final_ext != file_path.suffix:
+                final_name = f"output_{index}{final_ext}"
+                final_path = output_dir / final_name
+                file_path.rename(final_path)
+                file_path = final_path
+                file_name = final_name
 
             width = None
             height = None
@@ -143,6 +186,9 @@ class GoogleImageProvider(BaseProvider):
                     height=height,
                 )
             )
+
+        if not results:
+            raise RuntimeError(f"[provider={self.name}][stage=parse_response] no image data returned")
 
         task.model_name = settings.google_image_model
         task.prompt_final = prompt_text
