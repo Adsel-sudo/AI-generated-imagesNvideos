@@ -1,16 +1,26 @@
 import json
+import mimetypes
 import zipfile
 from pathlib import Path
+from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlmodel import Session, desc, select
 
 from .constants import DEFAULT_PROVIDER
+from .config import settings
 from .db import engine
 from .enums import TaskStatus
 from .models import Output, Task, utcnow
-from .schemas import CreateTaskRequest
+from .prompt_optimizer import prompt_optimizer
+from .schemas import (
+    CreateTaskRequest,
+    FileUploadResponse,
+    PromptGenerateTaskRequest,
+    PromptOptimizeRequest,
+    PromptOptimizeResponse,
+)
 from .storage import get_task_zip_path
 from .tasks import generate_task
 
@@ -20,6 +30,81 @@ router = APIRouter()
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@router.post("/api/files", response_model=FileUploadResponse)
+def upload_file(file: UploadFile = File(...)):
+    file_id = str(uuid4())
+    suffix = Path(file.filename or "").suffix or ".bin"
+    safe_name = Path(file.filename or f"{file_id}{suffix}").name
+    final_name = f"{file_id}{suffix}"
+    upload_dir = settings.uploads_dir
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    save_path = upload_dir / final_name
+
+    content = file.file.read()
+    save_path.write_bytes(content)
+
+    mime_type = file.content_type or mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+    return FileUploadResponse(
+        file_id=file_id,
+        file_name=safe_name,
+        file_path=str(save_path),
+        mime_type=mime_type,
+        file_size=save_path.stat().st_size,
+    )
+
+
+@router.post("/api/prompt/optimize", response_model=PromptOptimizeResponse)
+def optimize_prompt(payload: PromptOptimizeRequest):
+    optimized = prompt_optimizer.optimize(
+        task_type=payload.task_type,
+        raw_request=payload.raw_request,
+        references=[item.model_dump() for item in payload.references],
+        usage_options=payload.usage_options,
+        generation_targets=[item.model_dump() for item in payload.generation_targets],
+    )
+    return PromptOptimizeResponse(**optimized)
+
+
+@router.post("/api/prompt/generate-task")
+def generate_task_from_prompt(payload: PromptGenerateTaskRequest):
+    params = dict(payload.params)
+    params.update(
+        {
+            "optimized_prompt_cn": payload.optimized_prompt_cn,
+            "structured_summary": payload.structured_summary,
+            "references": [item.model_dump() for item in payload.references],
+            "generation_targets": [item.model_dump() for item in payload.generation_targets],
+            "usage_options": payload.usage_options,
+            "confirm_notes": payload.confirm_notes,
+        }
+    )
+
+    total_outputs = sum(item.n_outputs for item in payload.generation_targets) if payload.generation_targets else payload.n_outputs
+
+    with Session(engine) as session:
+        task = Task(
+            type=payload.task_type,
+            provider=payload.provider or DEFAULT_PROVIDER,
+            params_json=json.dumps(params, ensure_ascii=False),
+            request_text=payload.optimized_prompt_cn,
+            prompt_final=payload.generation_prompt,
+            n_outputs=total_outputs,
+            status=TaskStatus.QUEUED.value,
+        )
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+
+        celery_result = generate_task.delay(task.id)
+        task.celery_task_id = celery_result.id
+        task.updated_at = utcnow()
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+
+        return task
 
 
 @router.post("/api/tasks")
@@ -63,9 +148,16 @@ def get_task(task_id: str):
 
         outputs = session.exec(select(Output).where(Output.task_id == task_id).order_by(Output.index)).all()
 
+        outputs_data = [output.model_dump() for output in outputs]
+        outputs_by_target: dict[str, list[dict]] = {}
+        for item in outputs_data:
+            group = item.get("target_type") or "default"
+            outputs_by_target.setdefault(group, []).append(item)
+
         return {
             **task.model_dump(),
-            "outputs": [output.model_dump() for output in outputs],
+            "outputs": outputs_data,
+            "outputs_by_target": outputs_by_target,
         }
 
 

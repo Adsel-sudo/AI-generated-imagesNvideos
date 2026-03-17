@@ -1,4 +1,8 @@
-from sqlmodel import Session
+import json
+from copy import deepcopy
+from typing import Any
+
+from sqlmodel import Session, select
 
 from .celery_app import celery_app
 from .db import engine
@@ -27,6 +31,47 @@ def _update_task_status(
     session.add(task)
 
 
+def _load_params_json(task: Task) -> dict[str, Any]:
+    if not task.params_json:
+        return {}
+    try:
+        parsed = json.loads(task.params_json)
+        if isinstance(parsed, dict):
+            return parsed
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def _build_target_tasks(task: Task) -> list[tuple[str | None, Task]]:
+    params = _load_params_json(task)
+    targets = params.get("generation_targets") if isinstance(params.get("generation_targets"), list) else []
+    if not targets:
+        return [(None, task)]
+
+    derived: list[tuple[str | None, Task]] = []
+    for raw_target in targets:
+        if not isinstance(raw_target, dict):
+            continue
+
+        cloned = task.model_copy(deep=True)
+        task_params = deepcopy(params)
+        task_params["current_target"] = raw_target
+
+        for key in ("aspect_ratio", "width", "height"):
+            if raw_target.get(key) is not None:
+                task_params[key] = raw_target.get(key)
+
+        per_target_n = raw_target.get("n_outputs")
+        if isinstance(per_target_n, int) and per_target_n > 0:
+            cloned.n_outputs = per_target_n
+
+        cloned.params_json = json.dumps(task_params, ensure_ascii=False)
+        derived.append((str(raw_target.get("target_type") or "other"), cloned))
+
+    return derived or [(None, task)]
+
+
 @celery_app.task(name="generate_task")
 def generate_task(task_id: str):
     try:
@@ -37,24 +82,39 @@ def generate_task(task_id: str):
 
             _update_task_status(session, task, status=TaskStatus.RUNNING, started=True)
             session.commit()
-
-            # Re-read current task state in same session after status transition.
             session.refresh(task)
 
             provider = get_provider(task.provider)
             provider.validate_task_type(task)
-            generated_outputs = provider.generate(task)
 
             task_type = (task.type or "").strip().lower()
+            targets = _build_target_tasks(task)
+            all_outputs = []
+            main_prompt = None
 
-            # Mark saving while rows are persisted.
+            for target_type, target_task in targets:
+                generated_outputs = provider.generate(target_task)
+                if main_prompt is None:
+                    main_prompt = target_task.prompt_final
+
+                for item in generated_outputs:
+                    all_outputs.append((target_type, item))
+
+            task.prompt_final = main_prompt or task.prompt_final
+            task.model_name = task.model_name or getattr(targets[0][1], "model_name", None)
+
             _update_task_status(session, task, status=TaskStatus.SAVING)
 
             if task_type in {TaskType.IMAGE.value, TaskType.VIDEO.value}:
-                for item in generated_outputs:
+                next_index = 1
+                existing_count = session.exec(select(Output).where(Output.task_id == task_id)).all()
+                if existing_count:
+                    next_index = max(item.index for item in existing_count) + 1
+
+                for target_type, item in all_outputs:
                     output = Output(
                         task_id=task_id,
-                        index=item.index,
+                        index=next_index,
                         file_path=item.file_path,
                         mime_type=item.mime_type,
                         file_type=item.file_type,
@@ -64,10 +124,11 @@ def generate_task(task_id: str):
                         height=item.height,
                         duration_seconds=item.duration_seconds,
                         checksum=item.checksum,
+                        target_type=target_type,
                     )
+                    next_index += 1
                     session.add(output)
             elif task_type == TaskType.PROMPT.value:
-                # Prompt optimization writes its main output to task.prompt_final.
                 pass
 
             _update_task_status(session, task, status=TaskStatus.DONE, finished=True)

@@ -42,4 +42,5 @@ class Output(SQLModel, table=True):
     height: Optional[int] = None
     duration_seconds: Optional[float] = None
     checksum: Optional[str] = None
+    target_type: Optional[str] = None
     created_at: datetime = Field(default_factory=utcnow)

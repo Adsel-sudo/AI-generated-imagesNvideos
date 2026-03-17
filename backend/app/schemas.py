@@ -42,6 +42,7 @@ class OutputResponse(BaseModel):
     height: Optional[int] = None
     duration_seconds: Optional[float] = None
     checksum: Optional[str] = None
+    target_type: Optional[str] = None
     created_at: datetime
 
 
@@ -62,3 +63,53 @@ class TaskResponse(BaseModel):
     finished_at: Optional[datetime] = None
     error_message: Optional[str] = None
     outputs: list[OutputResponse] = Field(default_factory=list)
+
+
+class ReferenceInput(BaseModel):
+    file_path: str
+    role: str
+
+
+class GenerationTargetInput(BaseModel):
+    target_type: str
+    aspect_ratio: Optional[str] = None
+    width: Optional[int] = Field(default=None, gt=0)
+    height: Optional[int] = Field(default=None, gt=0)
+    n_outputs: int = Field(default=1, ge=1, le=12)
+
+
+class PromptOptimizeRequest(BaseModel):
+    task_type: str = Field(default=DEFAULT_TASK_TYPE)
+    raw_request: str
+    references: list[ReferenceInput] = Field(default_factory=list)
+    usage_options: dict[str, Any] = Field(default_factory=dict)
+    generation_targets: list[GenerationTargetInput] = Field(default_factory=list)
+
+
+class PromptOptimizeResponse(BaseModel):
+    structured_summary: dict[str, Any]
+    optimized_prompt_cn: str
+    generation_prompt: str
+    normalized_params: dict[str, Any]
+
+
+class PromptGenerateTaskRequest(BaseModel):
+    task_type: str = Field(default=DEFAULT_TASK_TYPE)
+    provider: Optional[str] = Field(default=DEFAULT_PROVIDER)
+    optimized_prompt_cn: str
+    generation_prompt: str
+    structured_summary: dict[str, Any] = Field(default_factory=dict)
+    references: list[ReferenceInput] = Field(default_factory=list)
+    generation_targets: list[GenerationTargetInput] = Field(default_factory=list)
+    usage_options: dict[str, Any] = Field(default_factory=dict)
+    confirm_notes: Optional[str] = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    n_outputs: int = Field(default=DEFAULT_N_OUTPUTS, ge=1, le=12)
+
+
+class FileUploadResponse(BaseModel):
+    file_id: str
+    file_name: str
+    file_path: str
+    mime_type: str
+    file_size: int

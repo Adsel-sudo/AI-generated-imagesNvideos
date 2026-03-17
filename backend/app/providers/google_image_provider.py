@@ -32,6 +32,7 @@ class GoogleImageProvider(BaseProvider):
         api_key = settings.google_genai_api_key
         if not api_key:
             api_key = settings.google_api_key
+        api_key = (api_key or "").replace("\ufeff", "").strip()
         if not api_key:
             raise ValueError(f"[provider={self.name}][stage=config] missing GOOGLE_GENAI_API_KEY/GOOGLE_API_KEY")
         return api_key
@@ -59,7 +60,9 @@ class GoogleImageProvider(BaseProvider):
             return {}
 
         params = normalize_task_params(task)
-        aspect_ratio = self._normalize_aspect_ratio(params.aspect_ratio)
+        current_target = params.extra.get("current_target") if isinstance(params.extra, dict) else None
+        target_aspect_ratio = current_target.get("aspect_ratio") if isinstance(current_target, dict) else None
+        aspect_ratio = self._normalize_aspect_ratio(target_aspect_ratio or params.aspect_ratio)
         if not aspect_ratio:
             aspect_ratio = self._normalize_aspect_ratio(params.size)
 
