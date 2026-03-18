@@ -242,3 +242,6 @@ data/*
 !data/logs/.gitkeep
 !data/db/
 !data/db/.gitkeep
+
+# nginx Basic Auth is generated inside the container
+nginx/.htpasswd
