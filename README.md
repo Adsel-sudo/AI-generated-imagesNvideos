@@ -24,6 +24,8 @@ Project skeleton for an internal AI image/video mid-platform MVP using FastAPI +
 cp .env.example .env
 ```
 
+Update `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` in `.env` if you do not want to use the defaults from `.env.example`.
+
 2. Start services:
 
 ```bash
@@ -33,7 +35,7 @@ docker compose up --build
 3. Verify health (Basic Auth required):
 
 ```bash
-curl -u admin:admin123 http://localhost:8080/health
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD" http://localhost:8080/health
 ```
 
 Expected:
@@ -49,7 +51,7 @@ Expected:
 ### Create task (google image)
 
 ```bash
-curl -u admin:admin123 -X POST http://localhost:8080/api/tasks \
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD" -X POST http://localhost:8080/api/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "type": "image",
@@ -67,7 +69,7 @@ curl -u admin:admin123 -X POST http://localhost:8080/api/tasks \
 ### Prompt optimizer task
 
 ```bash
-curl -u admin:admin123 -X POST http://localhost:8080/api/tasks \
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD" -X POST http://localhost:8080/api/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "type": "prompt",
@@ -82,19 +84,19 @@ curl -u admin:admin123 -X POST http://localhost:8080/api/tasks \
 ### List tasks (latest first)
 
 ```bash
-curl -u admin:admin123 http://localhost:8080/api/tasks
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD" http://localhost:8080/api/tasks
 ```
 
 ### Get task detail (with outputs)
 
 ```bash
-curl -u admin:admin123 http://localhost:8080/api/tasks/<task_id>
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD" http://localhost:8080/api/tasks/<task_id>
 ```
 
 ### Download one output
 
 ```bash
-curl -u admin:admin123 -L \
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD" -L \
   http://localhost:8080/api/tasks/<task_id>/outputs/<output_id> \
   --output output.png
 ```
@@ -102,7 +104,7 @@ curl -u admin:admin123 -L \
 ### Download zip
 
 ```bash
-curl -u admin:admin123 -L \
+curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD" -L \
   http://localhost:8080/api/tasks/<task_id>/download.zip \
   --output task_outputs.zip
 ```
@@ -121,7 +123,7 @@ curl -u admin:admin123 -L \
 - **Windows file permission/path issues**: ensure repo is under a Docker Desktop shared drive and restart Docker Desktop.
 - **Worker not processing tasks**: check `docker compose logs worker` and `docker compose logs redis`.
 - **SQLite locked errors**: avoid heavy concurrent writes in MVP; restart stack if needed.
-- **401 Unauthorized**: include `-u admin:admin123` in curl commands.
+- **401 Unauthorized**: include `-u "$BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD"` and confirm both values are set in `.env`.
 
 ## Non-goals in PR#1
 
