@@ -1,26 +1,102 @@
 "use client";
 
 import { useMemo, useState } from "react";
-
-const RAW_REQUIREMENT_PLACEHOLDER = `例：参考左图，自行布局：（至少有一张主人也在）
-狗狗在不同场景下穿着比基尼，如海滩、泳池、生日聚会、度假、湖边、暑假旅行、水上活动或水上聚会有各种各样游泳圈那种等等。
-每个场景尽量用不同的狗模特、不同姿势（至少不能一模一样），狗狗所在场景里的位置也尽量不要全部一样。
-移动版则居中展示。
-狗模特倾向于用【比如贵宾犬、比熊犬、吉娃娃、约克夏梗、马尔济斯、迷你雪纳瑞、西施犬、博美犬、查理王猎犬等等】。`;
+import { generateImageTask, optimizePrompt } from "@/src/lib/api/image";
 
 type SizeOption = "1600x1600" | "1464x600" | "600x450" | "other";
 
 export default function ImageWorkbenchPage() {
-  const [size, setSize] = useState<SizeOption>("1600x1600");
+  const [requestText, setRequestText] = useState("");
+  const [stylePreference, setStylePreference] = useState("");
+  const [selectedSize, setSelectedSize] = useState<SizeOption>("1600x1600");
   const [customSize, setCustomSize] = useState("");
+  const [optimizeLoading, setOptimizeLoading] = useState(false);
+  const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [mergedPrompt, setMergedPrompt] = useState("");
+  const [hasMerged, setHasMerged] = useState(false);
 
   const resolvedSizeText = useMemo(() => {
-    if (size === "1600x1600") return "1600 × 1600";
-    if (size === "1464x600") return "1464 × 600";
-    if (size === "600x450") return "600 × 450";
+    if (selectedSize === "1600x1600") return "1600 × 1600";
+    if (selectedSize === "1464x600") return "1464 × 600";
+    if (selectedSize === "600x450") return "600 × 450";
     return customSize.trim() ? customSize.trim() : "（未填写）";
-  }, [customSize, size]);
+  }, [customSize, selectedSize]);
+
+  const finalSizeValue = useMemo(() => {
+    if (selectedSize === "other") return customSize.trim();
+    return selectedSize;
+  }, [customSize, selectedSize]);
+
+  const buildTargetsFromSize = (size: string) => {
+    if (!size) return [];
+    return [
+      {
+        type: "custom",
+        aspect_ratio: size,
+      },
+    ];
+  };
+
+  const handleOptimizePrompt = async () => {
+    if (!requestText.trim()) {
+      setOptimizeError("请先填写原始需求");
+      return;
+    }
+
+    setOptimizeLoading(true);
+    setOptimizeError(null);
+
+    try {
+      const res = await optimizePrompt({
+        request_text: requestText.trim(),
+        targets: buildTargetsFromSize(finalSizeValue),
+        usage_options: [],
+        style_preference: stylePreference.trim(),
+        references: [],
+      });
+
+      // 把汇总后的中文提示词写入可编辑区
+      setMergedPrompt(res.optimized_prompt_cn ?? "");
+      setHasMerged(true);
+    } catch (e) {
+      const message =
+        e instanceof Error ? e.message : "优化失败，请稍后重试。";
+      setOptimizeError(message);
+    } finally {
+      setOptimizeLoading(false);
+    }
+  };
+
+  const handleSubmitTask = async () => {
+    // hasMerged=false 或 mergedPrompt 为空白时，直接使用原始需求
+    const shouldUseOriginal = !hasMerged || !mergedPrompt.trim().length;
+    const usedPrompt = shouldUseOriginal ? requestText.trim() : mergedPrompt;
+
+    if (!usedPrompt) {
+      setOptimizeError("请先填写原始需求");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setOptimizeError(null);
+
+    try {
+      await generateImageTask({
+        request_text: usedPrompt,
+        targets: buildTargetsFromSize(finalSizeValue),
+        usage_options: [],
+        style_preference: stylePreference.trim(),
+        references: [],
+      });
+    } catch (e) {
+      const message =
+        e instanceof Error ? e.message : "任务提交失败，请稍后重试。";
+      setOptimizeError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <main className="min-h-dvh bg-gradient-to-b from-slate-50 via-slate-50 to-slate-100/70 px-4 py-6 sm:px-6 sm:py-10">
@@ -41,7 +117,8 @@ export default function ImageWorkbenchPage() {
                 <textarea
                   className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-4 focus:ring-slate-200"
                   rows={8}
-                  placeholder={RAW_REQUIREMENT_PLACEHOLDER}
+                  value={requestText}
+                  onChange={(e) => setRequestText(e.target.value)}
                 />
               </div>
 
@@ -96,8 +173,8 @@ export default function ImageWorkbenchPage() {
                       type="radio"
                       name="size"
                       className="h-4 w-4 border-slate-300 text-slate-900 focus:ring-slate-400"
-                      checked={size === "1600x1600"}
-                      onChange={() => setSize("1600x1600")}
+                      checked={selectedSize === "1600x1600"}
+                      onChange={() => setSelectedSize("1600x1600")}
                     />
                     1600 × 1600
                   </label>
@@ -106,8 +183,8 @@ export default function ImageWorkbenchPage() {
                       type="radio"
                       name="size"
                       className="h-4 w-4 border-slate-300 text-slate-900 focus:ring-slate-400"
-                      checked={size === "1464x600"}
-                      onChange={() => setSize("1464x600")}
+                      checked={selectedSize === "1464x600"}
+                      onChange={() => setSelectedSize("1464x600")}
                     />
                     1464 × 600
                   </label>
@@ -116,8 +193,8 @@ export default function ImageWorkbenchPage() {
                       type="radio"
                       name="size"
                       className="h-4 w-4 border-slate-300 text-slate-900 focus:ring-slate-400"
-                      checked={size === "600x450"}
-                      onChange={() => setSize("600x450")}
+                      checked={selectedSize === "600x450"}
+                      onChange={() => setSelectedSize("600x450")}
                     />
                     600 × 450
                   </label>
@@ -126,13 +203,13 @@ export default function ImageWorkbenchPage() {
                       type="radio"
                       name="size"
                       className="h-4 w-4 border-slate-300 text-slate-900 focus:ring-slate-400"
-                      checked={size === "other"}
-                      onChange={() => setSize("other")}
+                      checked={selectedSize === "other"}
+                      onChange={() => setSelectedSize("other")}
                     />
                     其他
                   </label>
 
-                  {size === "other" ? (
+                  {selectedSize === "other" ? (
                     <input
                       className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-4 focus:ring-slate-200"
                       placeholder="例如：1200 × 628"
@@ -153,6 +230,8 @@ export default function ImageWorkbenchPage() {
                 <input
                   className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-4 focus:ring-slate-200"
                   placeholder="例：清爽、明亮、度假感、夏日氛围、适合电商展示"
+                  value={stylePreference}
+                  onChange={(e) => setStylePreference(e.target.value)}
                 />
               </div>
             </div>
@@ -160,28 +239,38 @@ export default function ImageWorkbenchPage() {
 
           {/* 右侧：结果区 */}
           <section className="grid gap-5">
-            {/* 优化提示词模块（与生成结果同级，放在上方） */}
+            {/* 需求汇总模块（与生成结果同级，放在上方） */}
             <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/70">
               <div className="flex items-center justify-between gap-3">
                 <button
                   type="button"
                   className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-900 shadow-sm hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-200"
+                  onClick={handleOptimizePrompt}
+                  disabled={optimizeLoading}
                 >
-                  优化提示词
+                  {optimizeLoading ? "汇总中..." : "👉 需求汇总"}
                 </button>
                 <button
                   type="button"
                   className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-5 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-600"
-                  onClick={() => setIsSubmitting(true)}
+                  onClick={handleSubmitTask}
                   disabled={isSubmitting}
                 >
                   {isSubmitting ? "任务生成中..." : "提交任务"}
                 </button>
               </div>
 
+              {optimizeError ? (
+                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {optimizeError}
+                </div>
+              ) : null}
+
               <textarea
                 className="mt-3 min-h-[160px] w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-slate-200 focus:ring-4 focus:ring-slate-200"
-                defaultValue="生成适用于电商平台的狗狗泳装主题图片，围绕海滩、泳池、生日聚会、湖边度假、水上活动等场景展开。每个场景使用不同的小型犬模特，如贵宾犬、比熊犬、吉娃娃、约克夏梗、马尔济斯、迷你雪纳瑞、西施犬、博美犬、查理王猎犬等。要求不同狗狗姿势、不同画面站位、不同构图，不要重复。整体画面清爽、明亮、具有夏日度假氛围，适合电商展示。移动端版本构图偏居中。"
+                value={mergedPrompt}
+                onChange={(e) => setMergedPrompt(e.target.value)}
+                placeholder={`点击『需求汇总』后，将整合原始需求、参考图片、尺寸选择和风格倾向生成完整描述。\n如果不点击汇总，将直接使用原始需求生成图片。\n你也可以在此基础上手动修改。`}
               />
             </div>
 

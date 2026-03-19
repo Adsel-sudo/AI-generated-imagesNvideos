@@ -14,4 +14,5 @@ if [ -z "${BASIC_AUTH_PASSWORD:-}" ]; then
 fi
 
 htpasswd -bc "$HTPASSWD_FILE" "$BASIC_AUTH_USER" "$BASIC_AUTH_PASSWORD"
+
 echo "Generated Basic Auth credentials at $HTPASSWD_FILE for user '$BASIC_AUTH_USER'."
