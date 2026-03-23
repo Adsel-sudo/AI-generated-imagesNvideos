@@ -51,7 +51,7 @@ export default function ImageWorkbenchPage() {
       const res = await optimizePrompt({
         request_text: requestText.trim(),
         targets: buildTargetsFromSize(finalSizeValue),
-        usage_options: [],
+        usage_options: {},
         style_preference: stylePreference.trim(),
         references: [],
       });
@@ -85,7 +85,7 @@ export default function ImageWorkbenchPage() {
       await generateImageTask({
         request_text: usedPrompt,
         targets: buildTargetsFromSize(finalSizeValue),
-        usage_options: [],
+        usage_options: {},
         style_preference: stylePreference.trim(),
         references: [],
       });
