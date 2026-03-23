@@ -11,6 +11,8 @@ services:
       - "8000"
     depends_on:
       - redis
+    networks:
+      - app
 
   worker:
     build:
@@ -23,6 +25,8 @@ services:
     depends_on:
       - redis
       - api
+    networks:
+      - app
 
   frontend:
     build:
@@ -34,9 +38,13 @@ services:
       - "3000"
     depends_on:
       - api
+    networks:
+      - app
 
   redis:
     image: redis:7-alpine
+    networks:
+      - app
 
   # Optional PostgreSQL service for long-running/AWS-style environments.
   # Enable with: docker compose --profile postgres up --build
@@ -49,6 +57,8 @@ services:
       POSTGRES_PASSWORD: aigenerated
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app
 
   nginx:
     build:
@@ -61,6 +71,12 @@ services:
     depends_on:
       - api
       - frontend
+    networks:
+      - app
 
 volumes:
   postgres_data:
+
+networks:
+  app:
+    driver: bridge

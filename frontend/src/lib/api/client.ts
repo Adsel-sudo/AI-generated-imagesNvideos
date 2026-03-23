@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").trim().replace(/\/$/, "");
 
 type HttpMethod = "GET" | "POST";
 
@@ -24,25 +24,33 @@ function getErrorMessage(response: Response, rawText: string, parsed: unknown): 
   );
 }
 
+function getRequestUrl(path: string): string {
+  return `${API_BASE_URL}${path}`;
+}
+
+function parseResponseBody(rawText: string): unknown {
+  if (!rawText) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    return rawText;
+  }
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body } = options;
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(getRequestUrl(path), {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
 
   const rawText = await response.text();
-
-  let parsed: unknown = null;
-  if (rawText) {
-    try {
-      parsed = JSON.parse(rawText);
-    } catch {
-      parsed = null;
-    }
-  }
+  const parsed = parseResponseBody(rawText);
 
   if (!response.ok) {
     throw new Error(getErrorMessage(response, rawText, parsed));
