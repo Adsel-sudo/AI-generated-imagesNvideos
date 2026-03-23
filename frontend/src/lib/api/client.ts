@@ -17,24 +17,36 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  if (!response.ok) {
-    let errorMessage = `Request failed with status ${response.status}`;
+  const rawText = await response.text();
 
+  let parsed: unknown = null;
+  if (rawText) {
     try {
-      const errorData = await response.json();
-      errorMessage =
-        errorData?.detail || errorData?.message || errorData?.error || errorMessage;
+      parsed = JSON.parse(rawText);
     } catch {
-      const errorText = await response.text();
-      if (errorText) {
-        errorMessage = errorText;
-      }
+      parsed = null;
     }
+  }
+
+  if (!response.ok) {
+    const parsedError =
+      parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+
+    const errorMessage =
+      (typeof parsedError?.detail === "string" && parsedError.detail) ||
+      (typeof parsedError?.message === "string" && parsedError.message) ||
+      (typeof parsedError?.error === "string" && parsedError.error) ||
+      rawText ||
+      `Request failed with status ${response.status}`;
 
     throw new Error(errorMessage);
   }
 
-  return (await response.json()) as T;
+  if (parsed !== null) {
+    return parsed as T;
+  }
+
+  return rawText as T;
 }
 
 export function getApiBaseUrl(): string {
