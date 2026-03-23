@@ -1,11 +1,27 @@
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
 
 type HttpMethod = "GET" | "POST";
 
 interface RequestOptions {
   method?: HttpMethod;
   body?: unknown;
+}
+
+function getErrorMessage(response: Response, rawText: string, parsed: unknown): string {
+  if (typeof parsed === "string" && parsed.trim()) {
+    return parsed.trim();
+  }
+
+  const parsedError =
+    parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+
+  return (
+    (typeof parsedError?.detail === "string" && parsedError.detail) ||
+    (typeof parsedError?.message === "string" && parsedError.message) ||
+    (typeof parsedError?.error === "string" && parsedError.error) ||
+    rawText.trim() ||
+    `Request failed with status ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`
+  );
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -29,17 +45,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   }
 
   if (!response.ok) {
-    const parsedError =
-      parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
-
-    const errorMessage =
-      (typeof parsedError?.detail === "string" && parsedError.detail) ||
-      (typeof parsedError?.message === "string" && parsedError.message) ||
-      (typeof parsedError?.error === "string" && parsedError.error) ||
-      rawText ||
-      `Request failed with status ${response.status}`;
-
-    throw new Error(errorMessage);
+    throw new Error(getErrorMessage(response, rawText, parsed));
   }
 
   if (parsed !== null) {
