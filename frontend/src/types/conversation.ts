@@ -5,6 +5,8 @@ export type GeneratedOutput = {
   kind: "image";
   url?: string;
   downloadUrl?: string;
+  file_path?: string;
+  file_name?: string;
   status: "placeholder" | "ready" | "failed";
 };
 

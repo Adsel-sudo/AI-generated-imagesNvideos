@@ -5,7 +5,9 @@ import type { UploadedReferenceAsset, WorkbenchDraft } from "@/src/types/workben
 const DEFAULT_TASK_TYPE = "image";
 
 const mapReferenceItems = (items: UploadedReferenceAsset[], role: string): UploadedReferenceFile[] =>
-  items.map((item) => ({ file_id: item.file_id, role }));
+  items
+    .filter((item) => Boolean(item.file_path))
+    .map((item) => ({ file_path: item.file_path, role }));
 
 const mapReferencesToPayload = (draft: WorkbenchDraft): UploadedReferenceFile[] => [
   ...mapReferenceItems(draft.references.product, "product"),

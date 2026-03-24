@@ -9,9 +9,9 @@ export type ErrorScene =
   | "timeout";
 
 const ERROR_MESSAGE_MAP: Record<ErrorScene, string> = {
-  empty_request: "请先输入你的需求，再开始生成。",
+  empty_request: "请填写需求",
   optimize_failed: "需求整理暂时失败了，请稍后再试。",
-  submit_failed: "任务提交未成功，请稍后重试。",
+  submit_failed: "任务提交失败，请稍后重试。",
   generation_failed: "图片生成失败，建议调整描述后再试一次。",
   network_error: "网络连接不稳定，请检查网络后重试。",
   upload_failed: "参考图上传失败，请稍后重试。",

@@ -1,4 +1,5 @@
 import json
+import logging
 import mimetypes
 import zipfile
 from pathlib import Path
@@ -25,6 +26,7 @@ from .storage import get_task_zip_path
 from .tasks import generate_task
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health")
@@ -57,14 +59,34 @@ def upload_file(file: UploadFile = File(...)):
 
 @router.post("/api/prompt/optimize", response_model=PromptOptimizeResponse)
 def optimize_prompt(payload: PromptOptimizeRequest):
-    optimized = prompt_optimizer.optimize(
-        task_type=payload.task_type,
-        raw_request=payload.raw_request,
-        references=[item.model_dump() for item in payload.references],
-        usage_options=payload.usage_options,
-        generation_targets=[item.model_dump() for item in payload.generation_targets],
+    references = [item.model_dump() for item in payload.references]
+    generation_targets = [item.model_dump() for item in payload.generation_targets]
+    logger.info(
+        "[stage=optimize_prompt] task_type=%s raw_len=%s refs=%s targets=%s optimizer_model=%s",
+        payload.task_type,
+        len((payload.raw_request or "").strip()),
+        len(references),
+        len(generation_targets),
+        settings.prompt_optimizer_model,
     )
-    return PromptOptimizeResponse(**optimized)
+    try:
+        optimized = prompt_optimizer.optimize(
+            task_type=payload.task_type,
+            raw_request=payload.raw_request,
+            references=references,
+            usage_options=payload.usage_options,
+            generation_targets=generation_targets,
+        )
+        return PromptOptimizeResponse(**optimized)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "[stage=optimize_prompt][failed] task_type=%s refs=%s targets=%s err=%r",
+            payload.task_type,
+            len(references),
+            len(generation_targets),
+            exc,
+        )
+        raise
 
 
 @router.post("/api/prompt/generate-task")
@@ -82,6 +104,16 @@ def generate_task_from_prompt(payload: PromptGenerateTaskRequest):
     )
 
     total_outputs = sum(item.n_outputs for item in payload.generation_targets) if payload.generation_targets else payload.n_outputs
+
+    logger.info(
+        "[stage=generate_task_from_prompt] provider=%s task_type=%s refs=%s targets=%s total_outputs=%s image_model=%s",
+        payload.provider or DEFAULT_PROVIDER,
+        payload.task_type,
+        len(payload.references),
+        len(payload.generation_targets),
+        total_outputs,
+        settings.google_image_model,
+    )
 
     with Session(engine) as session:
         task = Task(
