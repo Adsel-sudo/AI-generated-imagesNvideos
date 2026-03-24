@@ -11,10 +11,10 @@ export interface UploadedReferenceFile {
 }
 
 export interface OptimizeRequestPayload {
-  request_text: string;
-  size?: string;
-  style?: string;
+  task_type: string;
+  raw_request: string;
   references?: UploadedReferenceFile[];
+  usage_options?: Record<string, unknown>;
   generation_targets?: GenerationTarget[];
   [key: string]: unknown;
 }
@@ -22,7 +22,8 @@ export interface OptimizeRequestPayload {
 export interface OptimizeResponse {
   task_id?: string;
   optimized_prompt_cn?: string;
-  structured_summary?: string;
+  generation_prompt?: string;
+  structured_summary?: Record<string, unknown>;
   references?: UploadedReferenceFile[];
   generation_targets?: GenerationTarget[];
   usage_options?: Record<string, unknown>;
@@ -33,11 +34,10 @@ export interface OptimizeResponse {
 }
 
 export interface GenerateTaskRequestPayload {
-  request_text: string;
-  optimized_prompt_cn?: string;
-  structured_summary?: string;
-  size?: string;
-  style?: string;
+  task_type: string;
+  optimized_prompt_cn: string;
+  generation_prompt: string;
+  structured_summary: Record<string, unknown>;
   references?: UploadedReferenceFile[];
   generation_targets?: GenerationTarget[];
   usage_options?: Record<string, unknown>;
@@ -46,7 +46,8 @@ export interface GenerateTaskRequestPayload {
 }
 
 export interface GenerateTaskResponse {
-  task_id: string;
+  id?: string;
+  task_id?: string;
   status?: string;
   task?: TaskDetail;
   [key: string]: unknown;
