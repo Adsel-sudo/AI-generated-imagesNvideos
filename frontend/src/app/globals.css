@@ -8,7 +8,9 @@ body {
 }
 
 body {
-  color: rgb(15 23 42);
-  background: rgb(248 250 252);
+  color: rgb(30 41 59);
+  background:
+    radial-gradient(circle at 0% 0%, rgb(238 242 255 / 0.75), transparent 45%),
+    radial-gradient(circle at 100% 0%, rgb(241 245 249 / 0.9), transparent 50%),
+    rgb(241 245 249);
 }
-

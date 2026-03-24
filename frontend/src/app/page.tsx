@@ -30,6 +30,12 @@ import {
 type SizeOption = "1600x1600" | "1464x600" | "600x450" | "other";
 
 const PRESET_SIZES = ["1600x1600", "1464x600", "600x450"] as const;
+const REFERENCE_GROUPS: Array<{ label: string; key: ReferenceCategory }> = [
+  { label: "商品图", key: "product" },
+  { label: "元素/构图参考图", key: "composition" },
+  { label: "姿势参考图", key: "pose" },
+  { label: "风格参考图", key: "style" },
+];
 const POLL_INTERVAL_MS = 2000;
 const POLL_MAX_ATTEMPTS = 30;
 
@@ -80,6 +86,16 @@ function LoadingIcon() {
       <path d="M20 12a8 8 0 0 0-8-8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
+}
+
+function getMessageStatusBadge(status: Conversation["messages"][number]["system_status"]) {
+  if (status === "done") {
+    return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
+  }
+  if (status === "error") {
+    return "bg-rose-50 text-rose-700 ring-1 ring-rose-200";
+  }
+  return "bg-amber-50 text-amber-700 ring-1 ring-amber-200";
 }
 
 export default function ImageWorkbenchPage() {
@@ -180,6 +196,11 @@ export default function ImageWorkbenchPage() {
     } finally {
       setUploadingMap((prev) => ({ ...prev, [category]: false }));
     }
+  };
+
+  const handleDropFiles = (category: ReferenceCategory, files: FileList | null) => {
+    if (!files?.length) return;
+    void handleUploadFiles(category, files);
   };
 
   const handleRemoveReference = (category: ReferenceCategory, localId: string) => {
@@ -423,14 +444,13 @@ export default function ImageWorkbenchPage() {
   const canSend = draft.raw_request.trim().length > 0 && !sending;
 
   return (
-    <main className="h-dvh bg-[#f5f5f4] p-3 sm:p-4">
-      <div className="mx-auto grid h-full w-full max-w-[1600px] grid-cols-1 gap-3 lg:grid-cols-[320px_1fr_280px]">
-        <aside className="order-2 flex min-h-0 flex-col rounded-2xl border border-stone-200/80 bg-white/85 shadow-[0_1px_2px_rgba(15,23,42,0.03)] lg:order-1">
-          <div className="border-b border-stone-200/80 px-4 py-3 text-sm font-semibold text-stone-700">创作参数</div>
-          <div className="flex-1 space-y-4 overflow-y-auto p-4">
+    <main className="h-dvh bg-slate-100/80 px-2.5 py-1.5 sm:px-3 sm:py-2.5">
+      <div className="mx-auto grid h-full w-full max-w-[1480px] grid-cols-1 gap-1.5 lg:grid-cols-[380px_minmax(0,1fr)_220px]">
+        <aside className="order-2 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:order-1">
+          <div className="flex-1 space-y-2.5 overflow-y-auto p-2.5">
             <div>
-              <div className="mb-2 text-sm font-medium text-stone-600">尺寸选择</div>
-              <div className="grid grid-cols-2 gap-2 text-sm text-stone-700">
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">尺寸选择</div>
+              <div className="grid grid-cols-2 gap-1.5 text-sm text-slate-700">
                 {[
                   { label: "1600 × 1600", value: "1600x1600" as const },
                   { label: "1464 × 600", value: "1464x600" as const },
@@ -439,12 +459,12 @@ export default function ImageWorkbenchPage() {
                 ].map((option) => (
                   <label
                     key={option.value}
-                    className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5"
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100/70 px-2 py-1"
                   >
                     <input
                       type="radio"
                       name="size"
-                      className="h-4 w-4 border-stone-300 text-sky-600 focus:ring-sky-300"
+                      className="h-4 w-4 border-slate-300 text-violet-600 focus:ring-violet-300"
                       checked={selectedSizeOption === option.value}
                       onChange={() => {
                         if (option.value === "other") {
@@ -464,7 +484,7 @@ export default function ImageWorkbenchPage() {
               </div>
               {selectedSizeOption === "other" ? (
                 <input
-                  className="mt-2 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none ring-stone-200 placeholder:text-stone-400 focus:ring-2 focus:ring-sky-200"
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
                   placeholder="例如：1200 × 628"
                   value={customSizeInput || draft.size}
                   onChange={(e) => {
@@ -477,9 +497,9 @@ export default function ImageWorkbenchPage() {
             </div>
 
             <div>
-              <div className="mb-2 text-sm font-medium text-stone-600">风格需求</div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">风格需求</div>
               <input
-                className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none ring-stone-200 placeholder:text-stone-400 focus:ring-2 focus:ring-sky-200"
+                className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
                 placeholder="例：清爽、明亮、度假感、夏日氛围"
                 value={draft.style_preference}
                 onChange={(e) =>
@@ -492,27 +512,24 @@ export default function ImageWorkbenchPage() {
             </div>
 
             <div>
-              <div className="mb-2 text-sm font-medium text-stone-600">参考图片</div>
-              <div className="mb-2 text-xs text-stone-500">
-                商品图 {draft.references.product.length} 张
-                {draft.preserve_product_fidelity ? "（已启用商品一致性）" : ""}
-              </div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">参考图片</div>
               <div className="space-y-2">
-                {[
-                  { label: "商品图", key: "product" },
-                  { label: "元素/构图参考图", key: "composition" },
-                  { label: "姿势参考图", key: "pose" },
-                  { label: "风格参考图", key: "style" },
-                ].map((item) => {
-                  const category = item.key as ReferenceCategory;
+                {REFERENCE_GROUPS.map((item) => {
+                  const category = item.key;
                   return (
-                    <div
-                      key={item.key}
-                      className="rounded-xl border border-stone-200 bg-stone-50/70 p-3"
-                    >
-                      <div className="text-xs font-medium text-stone-700">{item.label}</div>
-                      <label className="mt-2 inline-flex cursor-pointer items-center rounded-lg border border-stone-200 bg-white px-2 py-1 text-xs text-stone-600 hover:bg-stone-50">
-                        {uploadingMap[category] ? "上传中..." : "上传图片"}
+                    <div key={item.key} className="space-y-1">
+                      <div className="text-xs font-medium text-slate-600">{item.label}</div>
+                      <label
+                        className="block cursor-pointer rounded-xl border border-dashed border-slate-300 bg-white/80 px-2.5 py-2.5 text-center text-xs text-slate-500 transition hover:border-violet-300 hover:text-violet-600"
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          handleDropFiles(category, event.dataTransfer.files);
+                        }}
+                      >
+                        {uploadingMap[category] ? "上传中..." : "点击或拖拽上传"}
                         <input
                           type="file"
                           accept="image/*"
@@ -526,30 +543,29 @@ export default function ImageWorkbenchPage() {
                       </label>
 
                       {draft.references[category].length ? (
-                        <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div className="flex flex-wrap gap-1">
                           {draft.references[category].map((asset) => (
-                            <div key={asset.local_id} className="rounded-lg border border-stone-200 bg-white p-1">
+                            <div key={asset.local_id} className="group relative">
                               <Image
                                 src={asset.preview_url}
                                 alt={asset.file_name || "参考图"}
-                                width={160}
-                                height={120}
-                                className="h-16 w-full rounded object-cover"
+                                width={84}
+                                height={84}
+                                className="h-16 w-16 rounded-lg border border-slate-200 object-cover"
                                 unoptimized
                               />
                               <button
                                 type="button"
-                                className="mt-1 w-full rounded border border-rose-200 px-1 py-0.5 text-[10px] text-rose-500 hover:bg-rose-50"
+                                className="absolute -right-1 -top-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] text-white opacity-90 hover:bg-rose-600"
                                 onClick={() => handleRemoveReference(category, asset.local_id)}
+                                aria-label={`删除${item.label}`}
                               >
-                                删除
+                                ×
                               </button>
                             </div>
                           ))}
                         </div>
-                      ) : (
-                        <div className="mt-2 h-14 rounded-lg border border-dashed border-stone-200 bg-white/90" />
-                      )}
+                      ) : null}
                     </div>
                   );
                 })}
@@ -558,41 +574,50 @@ export default function ImageWorkbenchPage() {
           </div>
         </aside>
 
-        <section className="order-1 flex min-h-0 flex-col rounded-2xl border border-stone-200/80 bg-white/90 shadow-[0_1px_2px_rgba(15,23,42,0.03)] lg:order-2">
-          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-6">
+        <section className="order-1 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/75 backdrop-blur shadow-[0_1px_2px_rgba(15,23,42,0.03)] lg:order-2">
+          <div className="flex-1 space-y-2.5 overflow-y-auto px-3 py-3 sm:px-4">
             {activeConversation?.messages.length ? (
               activeConversation.messages.map((message) => (
-                <article key={message.id} className="space-y-3">
-                  <div className="ml-auto max-w-[86%] rounded-2xl bg-sky-600 px-4 py-3 text-sm text-white shadow-sm">
+                <article key={message.id} className="space-y-2">
+                  <div className="ml-auto max-w-[68%] rounded-2xl bg-violet-600 px-3 py-2 text-sm text-white shadow-sm">
                     {message.user_input}
                   </div>
 
-                  <div className="max-w-[90%] rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-                    <div className="text-xs text-stone-500">尺寸：{message.size_text || "（未填写）"}</div>
-                    <div className="text-xs text-stone-500">风格：{message.style_preference || "（未填写）"}</div>
+                  <div className="max-w-[78%] space-y-1.5 rounded-2xl border border-slate-200 bg-slate-100/60 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${getMessageStatusBadge(
+                          message.system_status,
+                        )}`}
+                      >
+                        {message.system_status === "done"
+                          ? "生成完成"
+                          : message.system_status === "error"
+                            ? "生成失败"
+                            : "生成中"}
+                      </span>
+                      {message.optimized_prompt ? (
+                        <details className="max-w-[72%] rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-right">
+                          <summary className="cursor-pointer text-xs font-medium text-slate-600">
+                            查看优化后的提示词
+                          </summary>
+                          <div className="mt-1 text-left text-xs text-slate-500">{message.optimized_prompt}</div>
+                        </details>
+                      ) : null}
+                    </div>
+
                     {message.error_message ? (
-                      <div className="mt-2 text-xs text-rose-500">{message.error_message}</div>
+                      <div className="text-xs text-rose-600">{message.error_message}</div>
                     ) : null}
 
-                    {message.optimized_prompt ? (
-                      <details className="mt-2 rounded-lg border border-stone-200 bg-white px-2 py-1">
-                        <summary className="cursor-pointer text-xs font-medium text-stone-600">
-                          查看优化后的提示词
-                        </summary>
-                        <div className="mt-1 text-xs text-stone-500">{message.optimized_prompt}</div>
-                      </details>
-                    ) : null}
-                  </div>
-
-                  <div className="max-w-[92%] rounded-2xl border border-stone-200 bg-stone-50/60 p-3">
-                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <div className="grid gap-1.5 sm:grid-cols-2">
                       {message.generated_outputs.map((output) => (
                         <div
                           key={output.id}
-                          className="rounded-lg border border-stone-200 bg-white p-2"
+                          className="flex flex-col rounded-lg border border-slate-200 bg-white p-1.5"
                         >
-                          <div className="aspect-[4/3] w-full rounded-md border border-dashed border-stone-200 bg-stone-50" />
-                          <div className="mt-2 text-[11px] text-stone-500">
+                          <div className="aspect-[4/3] w-full rounded-md border border-dashed border-slate-200 bg-slate-100/70" />
+                          <div className="mt-1.5 text-[11px] text-slate-500">
                             状态：
                             {output.status === "ready"
                               ? "可下载"
@@ -606,7 +631,7 @@ export default function ImageWorkbenchPage() {
                               alt="生成结果"
                               width={768}
                               height={576}
-                              className="mt-2 h-auto w-full rounded-md border border-stone-200 object-cover"
+                              className="mt-1.5 h-auto w-full rounded-md border border-slate-200 object-cover"
                               unoptimized
                             />
                           ) : null}
@@ -617,7 +642,7 @@ export default function ImageWorkbenchPage() {
                               if (!output.downloadUrl) return;
                               window.open(output.downloadUrl, "_blank", "noopener,noreferrer");
                             }}
-                            className="mt-2 inline-flex items-center rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-500 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="mt-auto self-end pt-1.5 text-xs font-medium text-violet-600 hover:text-violet-700 disabled:cursor-not-allowed disabled:text-slate-400"
                           >
                             下载图片
                           </button>
@@ -628,17 +653,17 @@ export default function ImageWorkbenchPage() {
                 </article>
               ))
             ) : (
-              <div className="flex h-full min-h-[340px] items-center justify-center rounded-2xl border border-dashed border-stone-200 bg-stone-50/70 text-sm text-stone-500">
+              <div className="flex h-full min-h-[260px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-100/70 text-sm text-slate-500">
                 输入需求开始创建图片对话任务。
               </div>
             )}
           </div>
 
-          <div className="border-t border-stone-200/80 bg-white/95 px-4 py-3 sm:px-6">
+          <div className="border-t border-slate-200/80 bg-white/75 backdrop-blur px-3 py-2 sm:px-4">
             <div className="relative">
               <textarea
-                className="w-full resize-none rounded-2xl border border-stone-200 bg-white pl-4 pr-14 pt-3 pb-3 text-sm text-stone-800 outline-none ring-stone-200 placeholder:text-stone-400 focus:ring-2 focus:ring-sky-200"
-                rows={3}
+                className="w-full resize-none rounded-3xl border border-slate-200 bg-slate-50 pl-3.5 pr-11 pt-2.5 pb-2.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 shadow-[inset_0_1px_2px_rgba(15,23,42,0.04)] focus:bg-white focus:ring-2 focus:ring-violet-200"
+                rows={2}
                 value={draft.raw_request}
                 onChange={(e) =>
                   setDraft((prev) => ({
@@ -652,8 +677,8 @@ export default function ImageWorkbenchPage() {
                 type="button"
                 onClick={handleSubmitTask}
                 disabled={!canSend}
-                className={`absolute right-2 bottom-2 inline-flex h-10 w-10 items-center justify-center rounded-xl transition ${
-                  canSend ? "bg-sky-600 hover:bg-sky-500" : "bg-stone-200"
+                className={`absolute right-2 bottom-2 inline-flex h-8 w-8 items-center justify-center rounded-xl transition ${
+                  canSend ? "bg-violet-600 hover:bg-violet-500" : "bg-slate-200"
                 }`}
                 aria-label={sending ? "处理中" : "发送并生成"}
               >
@@ -661,41 +686,41 @@ export default function ImageWorkbenchPage() {
               </button>
             </div>
             {optimizeError ? (
-              <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
+              <div className="mt-1.5 rounded-xl border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-sm text-rose-600">
                 {optimizeError}
               </div>
             ) : null}
           </div>
         </section>
 
-        <aside className="order-3 flex min-h-0 flex-col rounded-2xl border border-stone-200/80 bg-white/85 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-          <div className="flex items-center justify-between border-b border-stone-200/80 px-4 py-3">
-            <span className="text-sm font-semibold text-stone-700">对话列表</span>
+        <aside className="order-3 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur">
+          <div className="flex items-center justify-between border-b border-slate-200/80 px-3 py-2">
+            <span className="text-sm font-semibold text-slate-700">对话列表</span>
             <button
               type="button"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-stone-200 bg-white text-stone-600 hover:bg-stone-50"
+              className="inline-flex items-center justify-center rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-100"
               onClick={handleNewConversation}
               aria-label="新建对话"
             >
-              +
+              +新对话
             </button>
           </div>
-          <div className="flex-1 space-y-2 overflow-y-auto p-3">
+          <div className="flex-1 space-y-1 overflow-y-auto p-1.5">
             {conversations.map((conversation) => (
               <button
                 key={conversation.conversation_id}
                 type="button"
                 onClick={() => setActiveConversationId(conversation.conversation_id)}
-                className={`w-full rounded-xl border px-3 py-2 text-left transition ${
+                className={`w-full rounded-lg border px-2 py-1 text-left transition ${
                   activeConversationId === conversation.conversation_id
-                    ? "border-sky-200 bg-sky-50 text-sky-800"
-                    : "border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
+                    ? "border-violet-300 bg-violet-50/90 text-violet-800 shadow-[0_4px_12px_rgba(124,58,237,0.15)]"
+                    : "border-slate-200/90 bg-white/80 text-slate-700 hover:bg-slate-100/70"
                 }`}
               >
-                <div className="truncate text-sm font-medium">{conversation.title}</div>
+                <div className="truncate text-sm font-medium leading-5">{conversation.title}</div>
                 <div
-                  className={`mt-1 truncate text-xs ${
-                    activeConversationId === conversation.conversation_id ? "text-sky-500" : "text-stone-400"
+                  className={`mt-0.5 truncate text-[10px] ${
+                    activeConversationId === conversation.conversation_id ? "text-violet-400/90" : "text-slate-400/80"
                   }`}
                 >
                   {new Date(conversation.updated_at).toLocaleString()}

@@ -1,16 +1,16 @@
 from pathlib import Path
 
-from pydantic import computed_field, field_validator
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_GOOGLE_IMAGE_MODEL = "gemini-3.1-flash-image-preview"
-DEFAULT_GOOGLE_VIDEO_MODEL = "veo-2.0-generate"
-DEFAULT_PROMPT_OPTIMIZER_MODEL = "gemini-2.0-flash"
+DEFAULT_GOOGLE_VIDEO_MODEL = "veo-3.1-fast-generate-001"
+DEFAULT_PROMPT_OPTIMIZER_MODEL = "gemini-3-flash-preview"
 
 
 class Settings(BaseSettings):
-    redis_url: str = "redis://redis:6379/0"
-    database_url: str = "sqlite:///data/db/app.db"
+    redis_url: str = Field(default="redis://redis:6379/0", validation_alias="REDIS_URL")
+    database_url: str = Field(default="sqlite:///data/db/app.db", validation_alias="DATABASE_URL")
 
     data_dir: Path = Path("data")
     outputs_dir: Path = Path("data/outputs")
@@ -19,12 +19,21 @@ class Settings(BaseSettings):
     logs_dir: Path = Path("data/logs")
 
     # Google provider settings.
-    google_api_key: str | None = None
-    google_genai_api_key: str | None = None
-    google_image_backend: str = "google_genai"
-    google_image_model: str = DEFAULT_GOOGLE_IMAGE_MODEL
-    google_video_model: str = DEFAULT_GOOGLE_VIDEO_MODEL
-    prompt_optimizer_model: str = DEFAULT_PROMPT_OPTIMIZER_MODEL
+    google_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")
+    google_genai_api_key: str | None = Field(default=None, validation_alias="GOOGLE_GENAI_API_KEY")
+    google_image_backend: str = Field(default="google_genai", validation_alias="GOOGLE_IMAGE_BACKEND")
+    google_image_model: str = Field(
+        default=DEFAULT_GOOGLE_IMAGE_MODEL,
+        validation_alias="GOOGLE_IMAGE_MODEL",
+    )
+    google_video_model: str = Field(
+        default=DEFAULT_GOOGLE_VIDEO_MODEL,
+        validation_alias="GOOGLE_VIDEO_MODEL",
+    )
+    prompt_optimizer_model: str = Field(
+        default=DEFAULT_PROMPT_OPTIMIZER_MODEL,
+        validation_alias="PROMPT_OPTIMIZER_MODEL",
+    )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

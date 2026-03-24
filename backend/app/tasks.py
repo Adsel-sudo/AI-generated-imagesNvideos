@@ -1,4 +1,5 @@
 import json
+import logging
 from copy import deepcopy
 from typing import Any
 
@@ -9,6 +10,8 @@ from .db import engine
 from .enums import TaskStatus, TaskType
 from .models import Output, Task, utcnow
 from .providers.router import get_provider
+
+logger = logging.getLogger(__name__)
 
 
 def _update_task_status(
@@ -78,8 +81,16 @@ def generate_task(task_id: str):
         with Session(engine) as session:
             task = session.get(Task, task_id)
             if not task:
+                logger.error("[task=%s][stage=load] task not found", task_id)
                 return
 
+            logger.info(
+                "[task=%s][stage=start] type=%s provider=%s requested_outputs=%s",
+                task_id,
+                task.type,
+                task.provider,
+                task.n_outputs,
+            )
             _update_task_status(session, task, status=TaskStatus.RUNNING, started=True)
             session.commit()
             session.refresh(task)
@@ -93,6 +104,13 @@ def generate_task(task_id: str):
             main_prompt = None
 
             for target_type, target_task in targets:
+                logger.info(
+                    "[task=%s][stage=provider_generate] provider=%s target=%s n_outputs=%s",
+                    task_id,
+                    provider.name,
+                    target_type or "default",
+                    target_task.n_outputs,
+                )
                 generated_outputs = provider.generate(target_task)
                 if main_prompt is None:
                     main_prompt = target_task.prompt_final
@@ -133,6 +151,13 @@ def generate_task(task_id: str):
 
             _update_task_status(session, task, status=TaskStatus.DONE, finished=True)
             session.commit()
+            logger.info(
+                "[task=%s][stage=done] provider=%s model=%s outputs=%s",
+                task_id,
+                task.provider,
+                task.model_name,
+                len(all_outputs),
+            )
     except Exception as exc:  # noqa: BLE001
         with Session(engine) as session:
             task = session.get(Task, task_id)
@@ -148,4 +173,5 @@ def generate_task(task_id: str):
                     finished=True,
                 )
                 session.commit()
+        logger.exception("[task=%s][stage=failed] %s", task_id, exc)
         raise
