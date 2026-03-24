@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import mimetypes
 import re
 from typing import Any
@@ -20,6 +21,8 @@ try:
 except Exception:  # noqa: BLE001
     genai = None
     genai_types = None
+
+logger = logging.getLogger(__name__)
 
 
 class GoogleImageProvider(BaseProvider):
@@ -129,15 +132,23 @@ class GoogleImageProvider(BaseProvider):
         client = genai.Client(api_key=self._api_key())
         prompt_text = self._build_prompt(task)
         config = self._build_config(task)
+        model_name = (settings.google_image_model or "").strip()
 
+        if not model_name:
+            raise ValueError(f"[provider={self.name}][stage=config] missing GOOGLE_IMAGE_MODEL")
+
+        logger.info("[provider=%s][stage=generate] model=%s", self.name, model_name)
         try:
             response = client.models.generate_content(
-                model=settings.google_image_model,
+                model=model_name,
                 contents=[prompt_text],
                 config=config,
             )
         except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"[provider={self.name}][stage=generate] [{type(exc).__name__}] {exc!r}") from exc
+            raise RuntimeError(
+                f"[provider={self.name}][stage=generate][model={model_name}] "
+                f"[{type(exc).__name__}] {exc!r}"
+            ) from exc
 
         output_dir = get_task_output_dir(task.id)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -191,8 +202,16 @@ class GoogleImageProvider(BaseProvider):
             )
 
         if not results:
-            raise RuntimeError(f"[provider={self.name}][stage=parse_response] no image data returned")
+            raise RuntimeError(
+                f"[provider={self.name}][stage=parse_response][model={model_name}] no image data returned"
+            )
 
-        task.model_name = settings.google_image_model
+        task.model_name = model_name
         task.prompt_final = prompt_text
+        logger.info(
+            "[provider=%s][stage=done] model=%s generated=%s",
+            self.name,
+            model_name,
+            len(results),
+        )
         return results
