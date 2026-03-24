@@ -51,6 +51,7 @@ export interface TaskDetail {
   n_outputs?: number | null;
   model_name?: string | null;
   prompt_final?: string | null;
+  error_message?: string | null;
   outputs?: OutputItem[];
   created_at?: string;
   updated_at?: string;

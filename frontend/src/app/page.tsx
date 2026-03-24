@@ -361,6 +361,10 @@ export default function ImageWorkbenchPage() {
       return;
     }
 
+    const filePath = output.file_path;
+    const fileName = output.file_name || `output_${output.id}.png`;
+    const previewUrl = output.url || output.downloadUrl || "";
+
     setReferenceError(null);
     setActiveDraft((prev) =>
       updatePreserveProductFidelity({
@@ -372,10 +376,10 @@ export default function ImageWorkbenchPage() {
             {
               local_id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
               file_id: output.id,
-              file_path: output.file_path,
-              file_name: output.file_name || `output_${output.id}.png`,
+              file_path: filePath,
+              file_name: fileName,
               mime_type: "image/png",
-              preview_url: output.url || output.downloadUrl || "",
+              preview_url: previewUrl,
             },
           ],
         },
