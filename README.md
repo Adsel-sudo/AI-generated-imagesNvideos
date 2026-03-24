@@ -25,6 +25,11 @@ cp .env.example .env
 ```
 
 Update `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` in `.env` if you do not want to use the defaults from `.env.example`.
+Model routing can be configured at system level via:
+
+- `GOOGLE_IMAGE_MODEL` (image generation)
+- `GOOGLE_VIDEO_MODEL` (video generation)
+- `PROMPT_OPTIMIZER_MODEL` (prompt optimization)
 
 2. Start services:
 

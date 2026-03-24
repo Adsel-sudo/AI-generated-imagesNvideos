@@ -48,6 +48,40 @@ const sleep = (ms: number) =>
     setTimeout(resolve, ms);
   });
 
+function SendIcon({ disabled }: { disabled: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={`h-5 w-5 ${disabled ? "text-slate-400" : "text-white"}`}
+      aria-hidden="true"
+    >
+      <path
+        d="M4 12L20 4L13 20L10.5 13.5L4 12Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function LoadingIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className="h-5 w-5 animate-spin text-slate-400"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="2" strokeOpacity="0.3" />
+      <path d="M20 12a8 8 0 0 0-8-8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function ImageWorkbenchPage() {
   const [sessionId, setSessionId] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -292,18 +326,23 @@ export default function ImageWorkbenchPage() {
     setIsSubmitting(true);
 
     let optimizedPromptCn: string | undefined;
+    let generationPrompt = "";
+    let structuredSummary: Record<string, unknown> = {};
 
     try {
       const optimizeRes = await optimizePrompt(
         buildOptimizePayload({
           draft: currentDraft,
-          session_id: sessionId,
-          conversation_id: selectedConversationId,
         }),
       );
 
       const optimized = optimizeRes.optimized_prompt_cn?.trim();
       optimizedPromptCn = optimized || undefined;
+      generationPrompt = typeof optimizeRes.generation_prompt === "string" ? optimizeRes.generation_prompt : "";
+      structuredSummary =
+        optimizeRes.structured_summary && typeof optimizeRes.structured_summary === "object"
+          ? optimizeRes.structured_summary
+          : {};
     } catch (error) {
       setOptimizeError(getFriendlyErrorMessage("optimize_failed", error));
     } finally {
@@ -340,13 +379,13 @@ export default function ImageWorkbenchPage() {
       const generateRes = await generateImageTask(
         buildGeneratePayload({
           draft: currentDraft,
-          session_id: sessionId,
-          conversation_id: selectedConversationId,
-          optimized_prompt_cn: optimizedPromptCn,
+          optimized_prompt_cn: optimizedPromptCn || currentDraft.raw_request,
+          generation_prompt: generationPrompt || optimizedPromptCn || currentDraft.raw_request,
+          structured_summary: structuredSummary,
         }),
       );
 
-      const taskId = generateRes.task_id || generateRes.task?.id;
+      const taskId = generateRes.id || generateRes.task_id || generateRes.task?.id;
       if (!taskId) {
         throw new Error("missing_task_id");
       }
@@ -380,108 +419,180 @@ export default function ImageWorkbenchPage() {
     }
   };
 
+  const sending = optimizeLoading || isSubmitting;
+  const canSend = draft.raw_request.trim().length > 0 && !sending;
+
   return (
-    <main className="min-h-dvh bg-gradient-to-b from-slate-50 via-slate-50 to-slate-100/70 p-4 sm:p-6">
-      <div className="mx-auto grid w-full max-w-7xl gap-4 lg:grid-cols-[280px_1fr]">
-        <aside className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/70">
-          <button
-            type="button"
-            className="inline-flex w-full items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800"
-            onClick={handleNewConversation}
-          >
-            + 新建对话
-          </button>
+    <main className="h-dvh bg-[#f5f5f4] p-3 sm:p-4">
+      <div className="mx-auto grid h-full w-full max-w-[1600px] grid-cols-1 gap-3 lg:grid-cols-[320px_1fr_280px]">
+        <aside className="order-2 flex min-h-0 flex-col rounded-2xl border border-stone-200/80 bg-white/85 shadow-[0_1px_2px_rgba(15,23,42,0.03)] lg:order-1">
+          <div className="border-b border-stone-200/80 px-4 py-3 text-sm font-semibold text-stone-700">创作参数</div>
+          <div className="flex-1 space-y-4 overflow-y-auto p-4">
+            <div>
+              <div className="mb-2 text-sm font-medium text-stone-600">尺寸选择</div>
+              <div className="grid grid-cols-2 gap-2 text-sm text-stone-700">
+                {[
+                  { label: "1600 × 1600", value: "1600x1600" as const },
+                  { label: "1464 × 600", value: "1464x600" as const },
+                  { label: "600 × 450", value: "600x450" as const },
+                  { label: "其他", value: "other" as const },
+                ].map((option) => (
+                  <label
+                    key={option.value}
+                    className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5"
+                  >
+                    <input
+                      type="radio"
+                      name="size"
+                      className="h-4 w-4 border-stone-300 text-sky-600 focus:ring-sky-300"
+                      checked={selectedSizeOption === option.value}
+                      onChange={() => {
+                        if (option.value === "other") {
+                          const nextCustom = customSizeInput.trim();
+                          setDraft((prev) => ({
+                            ...prev,
+                            size: nextCustom || prev.size,
+                          }));
+                          return;
+                        }
+                        setDraft((prev) => ({ ...prev, size: option.value }));
+                      }}
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </div>
+              {selectedSizeOption === "other" ? (
+                <input
+                  className="mt-2 w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none ring-stone-200 placeholder:text-stone-400 focus:ring-2 focus:ring-sky-200"
+                  placeholder="例如：1200 × 628"
+                  value={customSizeInput || draft.size}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setCustomSizeInput(value);
+                    setDraft((prev) => ({ ...prev, size: value }));
+                  }}
+                />
+              ) : null}
+            </div>
 
-          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px] text-slate-500">
-            session_id: <span className="font-medium text-slate-700">{sessionId || "初始化中..."}</span>
-          </div>
+            <div>
+              <div className="mb-2 text-sm font-medium text-stone-600">风格需求</div>
+              <input
+                className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-800 outline-none ring-stone-200 placeholder:text-stone-400 focus:ring-2 focus:ring-sky-200"
+                placeholder="例：清爽、明亮、度假感、夏日氛围"
+                value={draft.style_preference}
+                onChange={(e) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    style_preference: e.target.value,
+                  }))
+                }
+              />
+            </div>
 
-          <div className="mt-4 space-y-2">
-            {conversations.map((conversation) => (
-              <button
-                key={conversation.conversation_id}
-                type="button"
-                onClick={() => setActiveConversationId(conversation.conversation_id)}
-                className={`w-full rounded-xl border px-3 py-2 text-left transition ${
-                  activeConversationId === conversation.conversation_id
-                    ? "border-slate-900 bg-slate-900 text-white"
-                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                }`}
-              >
-                <div className="truncate text-sm font-medium">{conversation.title}</div>
-                <div
-                  className={`mt-1 truncate text-xs ${
-                    activeConversationId === conversation.conversation_id
-                      ? "text-slate-200"
-                      : "text-slate-400"
-                  }`}
-                >
-                  conversation_id: {conversation.conversation_id}
-                </div>
-              </button>
-            ))}
+            <div>
+              <div className="mb-2 text-sm font-medium text-stone-600">参考图片</div>
+              <div className="mb-2 text-xs text-stone-500">
+                商品图 {draft.references.product.length} 张
+                {draft.preserve_product_fidelity ? "（已启用商品一致性）" : ""}
+              </div>
+              <div className="space-y-2">
+                {[
+                  { label: "商品图", key: "product" },
+                  { label: "元素/构图参考图", key: "composition" },
+                  { label: "姿势参考图", key: "pose" },
+                  { label: "风格参考图", key: "style" },
+                ].map((item) => {
+                  const category = item.key as ReferenceCategory;
+                  return (
+                    <div
+                      key={item.key}
+                      className="rounded-xl border border-stone-200 bg-stone-50/70 p-3"
+                    >
+                      <div className="text-xs font-medium text-stone-700">{item.label}</div>
+                      <label className="mt-2 inline-flex cursor-pointer items-center rounded-lg border border-stone-200 bg-white px-2 py-1 text-xs text-stone-600 hover:bg-stone-50">
+                        {uploadingMap[category] ? "上传中..." : "上传图片"}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => {
+                            void handleUploadFiles(category, e.target.files);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+
+                      {draft.references[category].length ? (
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          {draft.references[category].map((asset) => (
+                            <div key={asset.local_id} className="rounded-lg border border-stone-200 bg-white p-1">
+                              <Image
+                                src={asset.preview_url}
+                                alt={asset.file_name || "参考图"}
+                                width={160}
+                                height={120}
+                                className="h-16 w-full rounded object-cover"
+                                unoptimized
+                              />
+                              <button
+                                type="button"
+                                className="mt-1 w-full rounded border border-rose-200 px-1 py-0.5 text-[10px] text-rose-500 hover:bg-rose-50"
+                                onClick={() => handleRemoveReference(category, asset.local_id)}
+                              >
+                                删除
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-2 h-14 rounded-lg border border-dashed border-stone-200 bg-white/90" />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </aside>
 
-        <section className="flex min-h-[80dvh] flex-col rounded-2xl border border-slate-200/70 bg-white/80 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/70">
-          <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+        <section className="order-1 flex min-h-0 flex-col rounded-2xl border border-stone-200/80 bg-white/90 shadow-[0_1px_2px_rgba(15,23,42,0.03)] lg:order-2">
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-5 sm:px-6">
             {activeConversation?.messages.length ? (
               activeConversation.messages.map((message) => (
-                <article
-                  key={message.id}
-                  className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
-                >
-                  <div className="rounded-xl bg-slate-900/95 px-4 py-3 text-sm text-white">
-                    <div className="mb-1 text-xs text-slate-300">用户输入</div>
+                <article key={message.id} className="space-y-3">
+                  <div className="ml-auto max-w-[86%] rounded-2xl bg-sky-600 px-4 py-3 text-sm text-white shadow-sm">
                     {message.user_input}
                   </div>
 
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-xs text-slate-500">系统状态</span>
-                      {message.system_status === "processing" ? (
-                        <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                          处理中
-                        </span>
-                      ) : message.system_status === "done" ? (
-                        <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                          已完成
-                        </span>
-                      ) : (
-                        <span className="rounded-md bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">
-                          失败
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="text-xs text-slate-500">尺寸：{message.size_text || "（未填写）"}</div>
-                    <div className="text-xs text-slate-500">
-                      风格倾向：{message.style_preference || "（未填写）"}
-                    </div>
+                  <div className="max-w-[90%] rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+                    <div className="text-xs text-stone-500">尺寸：{message.size_text || "（未填写）"}</div>
+                    <div className="text-xs text-stone-500">风格：{message.style_preference || "（未填写）"}</div>
                     {message.error_message ? (
-                      <div className="mt-2 text-xs text-rose-600">{message.error_message}</div>
+                      <div className="mt-2 text-xs text-rose-500">{message.error_message}</div>
                     ) : null}
 
                     {message.optimized_prompt ? (
-                      <details className="mt-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
-                        <summary className="cursor-pointer text-xs font-medium text-slate-600">
+                      <details className="mt-2 rounded-lg border border-stone-200 bg-white px-2 py-1">
+                        <summary className="cursor-pointer text-xs font-medium text-stone-600">
                           查看优化后的提示词
                         </summary>
-                        <div className="mt-1 text-xs text-slate-500">{message.optimized_prompt}</div>
+                        <div className="mt-1 text-xs text-stone-500">{message.optimized_prompt}</div>
                       </details>
                     ) : null}
                   </div>
 
-                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-3">
-                    <div className="text-xs text-slate-500">图片结果占位</div>
+                  <div className="max-w-[92%] rounded-2xl border border-stone-200 bg-stone-50/60 p-3">
                     <div className="mt-2 grid gap-2 sm:grid-cols-2">
                       {message.generated_outputs.map((output) => (
                         <div
                           key={output.id}
-                          className="rounded-lg border border-dashed border-slate-300 bg-white p-2"
+                          className="rounded-lg border border-stone-200 bg-white p-2"
                         >
-                          <div className="aspect-[4/3] w-full rounded-md border border-dashed border-slate-300 bg-slate-50" />
-                          <div className="mt-2 text-[11px] text-slate-500">
+                          <div className="aspect-[4/3] w-full rounded-md border border-dashed border-stone-200 bg-stone-50" />
+                          <div className="mt-2 text-[11px] text-stone-500">
                             状态：
                             {output.status === "ready"
                               ? "可下载"
@@ -495,7 +606,7 @@ export default function ImageWorkbenchPage() {
                               alt="生成结果"
                               width={768}
                               height={576}
-                              className="mt-2 h-auto w-full rounded-md border border-slate-200 object-cover"
+                              className="mt-2 h-auto w-full rounded-md border border-stone-200 object-cover"
                               unoptimized
                             />
                           ) : null}
@@ -506,7 +617,7 @@ export default function ImageWorkbenchPage() {
                               if (!output.downloadUrl) return;
                               window.open(output.downloadUrl, "_blank", "noopener,noreferrer");
                             }}
-                            className="mt-2 inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="mt-2 inline-flex items-center rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-500 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             下载图片
                           </button>
@@ -517,200 +628,82 @@ export default function ImageWorkbenchPage() {
                 </article>
               ))
             ) : (
-              <div className="flex h-full min-h-[340px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 text-sm text-slate-500">
-                开始输入需求，创建第一轮对话式生图任务。
+              <div className="flex h-full min-h-[340px] items-center justify-center rounded-2xl border border-dashed border-stone-200 bg-stone-50/70 text-sm text-stone-500">
+                输入需求开始创建图片对话任务。
               </div>
             )}
           </div>
 
-          <div className="border-t border-slate-200/80 bg-white/70 p-4 sm:p-5">
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div>
-                <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  原始需求
-                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-                    必填
-                  </span>
-                </div>
-                <textarea
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-4 focus:ring-slate-200"
-                  rows={5}
-                  value={draft.raw_request}
-                  onChange={(e) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      raw_request: e.target.value,
-                    }))
-                  }
-                  placeholder="请输入你的生图需求，例如：夏日海边防晒喷雾电商主图..."
-                />
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                    尺寸选择
-                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-                      选填
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-sm text-slate-700">
-                    {[
-                      { label: "1600 × 1600", value: "1600x1600" as const },
-                      { label: "1464 × 600", value: "1464x600" as const },
-                      { label: "600 × 450", value: "600x450" as const },
-                      { label: "其他", value: "other" as const },
-                    ].map((option) => (
-                      <label
-                        key={option.value}
-                        className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5"
-                      >
-                        <input
-                          type="radio"
-                          name="size"
-                          className="h-4 w-4 border-slate-300 text-slate-900 focus:ring-slate-400"
-                          checked={selectedSizeOption === option.value}
-                          onChange={() => {
-                            if (option.value === "other") {
-                              const nextCustom = customSizeInput.trim();
-                              setDraft((prev) => ({
-                                ...prev,
-                                size: nextCustom || prev.size,
-                              }));
-                              return;
-                            }
-                            setDraft((prev) => ({ ...prev, size: option.value }));
-                          }}
-                        />
-                        {option.label}
-                      </label>
-                    ))}
-                  </div>
-                  {selectedSizeOption === "other" ? (
-                    <input
-                      className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-4 focus:ring-slate-200"
-                      placeholder="例如：1200 × 628"
-                      value={customSizeInput || draft.size}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setCustomSizeInput(value);
-                        setDraft((prev) => ({ ...prev, size: value }));
-                      }}
-                    />
-                  ) : null}
-                </div>
-
-                <div>
-                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                    风格倾向
-                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-                      选填
-                    </span>
-                  </div>
-                  <input
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-4 focus:ring-slate-200"
-                    placeholder="例：清爽、明亮、度假感、夏日氛围"
-                    value={draft.style_preference}
-                    onChange={(e) =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        style_preference: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-              </div>
+          <div className="border-t border-stone-200/80 bg-white/95 px-4 py-3 sm:px-6">
+            <div className="relative">
+              <textarea
+                className="w-full resize-none rounded-2xl border border-stone-200 bg-white pl-4 pr-14 pt-3 pb-3 text-sm text-stone-800 outline-none ring-stone-200 placeholder:text-stone-400 focus:ring-2 focus:ring-sky-200"
+                rows={3}
+                value={draft.raw_request}
+                onChange={(e) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    raw_request: e.target.value,
+                  }))
+                }
+                placeholder="输入原始需求，或继续补充修改..."
+              />
+              <button
+                type="button"
+                onClick={handleSubmitTask}
+                disabled={!canSend}
+                className={`absolute right-2 bottom-2 inline-flex h-10 w-10 items-center justify-center rounded-xl transition ${
+                  canSend ? "bg-sky-600 hover:bg-sky-500" : "bg-stone-200"
+                }`}
+                aria-label={sending ? "处理中" : "发送并生成"}
+              >
+                {sending ? <LoadingIcon /> : <SendIcon disabled={!canSend} />}
+              </button>
             </div>
-
-            <div className="mt-4">
-              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                参考图片
-                <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
-                  选填
-                </span>
-              </div>
-              <div className="mb-2 text-xs text-slate-500">
-                商品图已上传 {draft.references.product.length} 张
-                {draft.preserve_product_fidelity ? "（已启用商品一致性）" : ""}
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                {[
-                  { label: "商品图", key: "product" },
-                  { label: "元素/构图参考图", key: "composition" },
-                  { label: "姿势参考图", key: "pose" },
-                  { label: "风格参考图", key: "style" },
-                ].map((item) => {
-                  const category = item.key as ReferenceCategory;
-                  return (
-                  <div
-                    key={item.key}
-                    className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 p-3"
-                  >
-                    <div className="text-xs font-medium text-slate-900">{item.label}</div>
-                    <div className="mt-1 text-[11px] text-slate-500">支持多图上传、预览与删除</div>
-                    <label className="mt-2 inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
-                      {uploadingMap[category] ? "上传中..." : "上传图片"}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => {
-                          void handleUploadFiles(category, e.target.files);
-                          e.target.value = "";
-                        }}
-                      />
-                    </label>
-
-                    {draft.references[category].length ? (
-                      <div className="mt-2 grid grid-cols-2 gap-2">
-                        {draft.references[category].map((asset) => (
-                          <div key={asset.local_id} className="rounded-lg border border-slate-200 bg-white p-1">
-                            <Image
-                              src={asset.preview_url}
-                              alt={asset.file_name || "参考图"}
-                              width={160}
-                              height={120}
-                              className="h-16 w-full rounded object-cover"
-                              unoptimized
-                            />
-                            <button
-                              type="button"
-                              className="mt-1 w-full rounded border border-rose-200 px-1 py-0.5 text-[10px] text-rose-600 hover:bg-rose-50"
-                              onClick={() => handleRemoveReference(category, asset.local_id)}
-                            >
-                              删除
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="mt-2 h-14 rounded-lg border border-dashed border-slate-200 bg-white/80" />
-                    )}
-                  </div>
-                  );
-                })}
-              </div>
-            </div>
-
             {optimizeError ? (
-              <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600">
                 {optimizeError}
               </div>
             ) : null}
-
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-5 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-600"
-                onClick={handleSubmitTask}
-                disabled={isSubmitting || optimizeLoading}
-              >
-                {optimizeLoading ? "正在整理需求..." : isSubmitting ? "任务提交中..." : "发送并生成"}
-              </button>
-            </div>
           </div>
         </section>
+
+        <aside className="order-3 flex min-h-0 flex-col rounded-2xl border border-stone-200/80 bg-white/85 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+          <div className="flex items-center justify-between border-b border-stone-200/80 px-4 py-3">
+            <span className="text-sm font-semibold text-stone-700">对话列表</span>
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-stone-200 bg-white text-stone-600 hover:bg-stone-50"
+              onClick={handleNewConversation}
+              aria-label="新建对话"
+            >
+              +
+            </button>
+          </div>
+          <div className="flex-1 space-y-2 overflow-y-auto p-3">
+            {conversations.map((conversation) => (
+              <button
+                key={conversation.conversation_id}
+                type="button"
+                onClick={() => setActiveConversationId(conversation.conversation_id)}
+                className={`w-full rounded-xl border px-3 py-2 text-left transition ${
+                  activeConversationId === conversation.conversation_id
+                    ? "border-sky-200 bg-sky-50 text-sky-800"
+                    : "border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
+                }`}
+              >
+                <div className="truncate text-sm font-medium">{conversation.title}</div>
+                <div
+                  className={`mt-1 truncate text-xs ${
+                    activeConversationId === conversation.conversation_id ? "text-sky-500" : "text-stone-400"
+                  }`}
+                >
+                  {new Date(conversation.updated_at).toLocaleString()}
+                </div>
+              </button>
+            ))}
+          </div>
+        </aside>
       </div>
     </main>
   );
