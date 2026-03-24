@@ -3,6 +3,7 @@ import { getApiBaseUrl } from "@/src/lib/api/client";
 export type UploadFileResponse = {
   file_id: string;
   file_name?: string;
+  file_path?: string;
   mime_type?: string;
   url?: string;
 };
@@ -50,6 +51,7 @@ export async function uploadFile(file: File): Promise<UploadFileResponse> {
   return {
     file_id: fileId,
     file_name: typeof json?.file_name === "string" ? json.file_name : file.name,
+    file_path: typeof json?.file_path === "string" ? json.file_path : undefined,
     mime_type: typeof json?.mime_type === "string" ? json.mime_type : file.type,
     url: typeof json?.url === "string" ? json.url : undefined,
   };

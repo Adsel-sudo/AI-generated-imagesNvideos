@@ -9,6 +9,7 @@ from .celery_app import celery_app
 from .db import engine
 from .enums import TaskStatus, TaskType
 from .models import Output, Task, utcnow
+from .config import settings
 from .providers.router import get_provider
 
 logger = logging.getLogger(__name__)
@@ -85,11 +86,13 @@ def generate_task(task_id: str):
                 return
 
             logger.info(
-                "[task=%s][stage=start] type=%s provider=%s requested_outputs=%s",
+                "[task=%s][stage=start] type=%s provider=%s requested_outputs=%s image_model=%s optimizer_model=%s",
                 task_id,
                 task.type,
                 task.provider,
                 task.n_outputs,
+                settings.google_image_model,
+                settings.prompt_optimizer_model,
             )
             _update_task_status(session, task, status=TaskStatus.RUNNING, started=True)
             session.commit()
@@ -100,6 +103,12 @@ def generate_task(task_id: str):
 
             task_type = (task.type or "").strip().lower()
             targets = _build_target_tasks(task)
+            logger.info(
+                "[task=%s][stage=targets] count=%s params=%s",
+                task_id,
+                len(targets),
+                _load_params_json(task),
+            )
             all_outputs = []
             main_prompt = None
 

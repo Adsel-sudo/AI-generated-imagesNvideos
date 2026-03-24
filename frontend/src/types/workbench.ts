@@ -10,6 +10,7 @@ export type ReferenceCategory = keyof ReferenceBuckets;
 export type UploadedReferenceAsset = {
   local_id: string;
   file_id: string;
+  file_path: string;
   file_name?: string;
   mime_type?: string;
   preview_url: string;

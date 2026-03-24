@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type SetStateAction, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import {
   generateImageTask,
@@ -48,11 +48,20 @@ const getSizeDisplayText = (size: string) => {
 
 const TERMINAL_SUCCESS = new Set(["succeeded", "completed"]);
 const TERMINAL_FAILED = new Set(["failed", "cancelled"]);
+const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/;
 
 const sleep = (ms: number) =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+
+const parseCustomSize = (size: string): { width: string; height: string } => {
+  const matched = (size || "").match(/^(\d+)x(\d+)$/i);
+  return {
+    width: matched?.[1] ?? "",
+    height: matched?.[2] ?? "",
+  };
+};
 
 function SendIcon({ disabled }: { disabled: boolean }) {
   return (
@@ -102,13 +111,16 @@ export default function ImageWorkbenchPage() {
   const [sessionId, setSessionId] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string>("");
+  const [draftByConversationId, setDraftByConversationId] = useState<Record<string, WorkbenchDraft>>({});
 
   const [draft, setDraft] = useState<WorkbenchDraft>(createEmptyWorkbenchDraft());
-  const [customSizeInput, setCustomSizeInput] = useState("");
+  const [customWidthInput, setCustomWidthInput] = useState("");
+  const [customHeightInput, setCustomHeightInput] = useState("");
 
   const [optimizeLoading, setOptimizeLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [optimizeError, setOptimizeError] = useState<string | null>(null);
+  const [, setOptimizeError] = useState<string | null>(null);
+  const [referenceError, setReferenceError] = useState<string | null>(null);
   const [uploadingMap, setUploadingMap] = useState<Record<ReferenceCategory, boolean>>({
     product: false,
     composition: false,
@@ -122,6 +134,10 @@ export default function ImageWorkbenchPage() {
     }
     return "other";
   }, [draft.size]);
+
+  const customWidthValid = POSITIVE_INTEGER_PATTERN.test(customWidthInput);
+  const customHeightValid = POSITIVE_INTEGER_PATTERN.test(customHeightInput);
+  const customSizeReady = customWidthValid && customHeightValid;
 
   const activeConversation = useMemo(
     () => conversations.find((item) => item.conversation_id === activeConversationId) ?? null,
@@ -144,17 +160,121 @@ export default function ImageWorkbenchPage() {
     });
   }, [activeConversationId, conversations, sessionId]);
 
+  useEffect(() => {
+    if (!activeConversationId) return;
+
+    const existingDraft = draftByConversationId[activeConversationId];
+    if (existingDraft) {
+      setDraft(existingDraft);
+      const custom = parseCustomSize(existingDraft.size);
+      setCustomWidthInput(PRESET_SIZES.includes(existingDraft.size as (typeof PRESET_SIZES)[number]) ? "" : custom.width);
+      setCustomHeightInput(PRESET_SIZES.includes(existingDraft.size as (typeof PRESET_SIZES)[number]) ? "" : custom.height);
+      setOptimizeError(null);
+      setReferenceError(null);
+      return;
+    }
+
+    const emptyDraft = createEmptyWorkbenchDraft();
+    const nextDraft: WorkbenchDraft = {
+      ...emptyDraft,
+      reserved: {
+        ...emptyDraft.reserved,
+        session_id: sessionId,
+        conversation_id: activeConversationId,
+      },
+    };
+
+    setDraft(nextDraft);
+    setDraftByConversationId((prev) => ({
+      ...prev,
+      [activeConversationId]: nextDraft,
+    }));
+    setCustomWidthInput("");
+    setCustomHeightInput("");
+    setOptimizeError(null);
+    setReferenceError(null);
+  }, [activeConversationId, draftByConversationId, sessionId]);
+
+  const setActiveDraft = (updater: SetStateAction<WorkbenchDraft>) => {
+    setDraft((prev) => {
+      const nextDraft =
+        typeof updater === "function" ? (updater as (prevState: WorkbenchDraft) => WorkbenchDraft)(prev) : updater;
+
+      if (activeConversationId) {
+        setDraftByConversationId((prevDrafts) => ({
+          ...prevDrafts,
+          [activeConversationId]: nextDraft,
+        }));
+      }
+
+      return nextDraft;
+    });
+  };
+
+  const createConversationDraft = (conversationId: string): WorkbenchDraft => {
+    const emptyDraft = createEmptyWorkbenchDraft();
+    return {
+      ...emptyDraft,
+      reserved: {
+        ...emptyDraft.reserved,
+        session_id: sessionId,
+        conversation_id: conversationId,
+      },
+    };
+  };
+
   const handleNewConversation = () => {
     const conversation = createConversation();
+    const nextDraft = createConversationDraft(conversation.conversation_id);
+
     setConversations((prev) => [conversation, ...prev]);
-    setActiveConversationId(conversation.conversation_id);
-    setDraft((prev) => ({
+    setDraft(nextDraft);
+    setDraftByConversationId((prev) => ({
       ...prev,
-      reserved: {
-        ...prev.reserved,
-        conversation_id: conversation.conversation_id,
-      },
+      [conversation.conversation_id]: nextDraft,
     }));
+    setCustomWidthInput("");
+    setCustomHeightInput("");
+    setOptimizeError(null);
+    setReferenceError(null);
+    setActiveConversationId(conversation.conversation_id);
+  };
+
+  const handleDeleteConversation = (conversationId: string) => {
+    setConversations((prev) => {
+      const targetIndex = prev.findIndex((item) => item.conversation_id === conversationId);
+      if (targetIndex === -1) return prev;
+
+      let nextConversations = prev.filter((item) => item.conversation_id !== conversationId);
+      let nextActiveId = activeConversationId;
+
+      if (nextConversations.length === 0) {
+        const fallbackConversation = createConversation();
+        const fallbackDraft = createConversationDraft(fallbackConversation.conversation_id);
+        nextConversations = [fallbackConversation];
+        nextActiveId = fallbackConversation.conversation_id;
+        setDraft(fallbackDraft);
+        setDraftByConversationId({ [fallbackConversation.conversation_id]: fallbackDraft });
+      } else {
+        setDraftByConversationId((prevDrafts) => {
+          const nextDrafts = { ...prevDrafts };
+          delete nextDrafts[conversationId];
+          return nextDrafts;
+        });
+
+        if (activeConversationId === conversationId) {
+          const fallbackConversation =
+            nextConversations[targetIndex] ?? nextConversations[targetIndex - 1] ?? nextConversations[0];
+          nextActiveId = fallbackConversation.conversation_id;
+        }
+      }
+
+      setActiveConversationId(nextActiveId);
+      setOptimizeError(null);
+      setReferenceError(null);
+
+      return nextConversations;
+    });
   };
 
   const updatePreserveProductFidelity = (nextDraft: WorkbenchDraft): WorkbenchDraft => ({
@@ -164,9 +284,13 @@ export default function ImageWorkbenchPage() {
 
   const handleUploadFiles = async (category: ReferenceCategory, files: FileList | null) => {
     if (!files?.length) return;
+    if (!draft.raw_request.trim()) {
+      setReferenceError(getFriendlyErrorMessage("empty_request"));
+      return;
+    }
 
     setUploadingMap((prev) => ({ ...prev, [category]: true }));
-    setOptimizeError(null);
+    setReferenceError(null);
 
     try {
       const uploadedAssets = await Promise.all(
@@ -175,6 +299,7 @@ export default function ImageWorkbenchPage() {
           return {
             local_id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
             file_id: uploaded.file_id,
+            file_path: uploaded.file_path || "",
             file_name: uploaded.file_name || file.name,
             mime_type: uploaded.mime_type || file.type,
             preview_url: URL.createObjectURL(file),
@@ -182,7 +307,7 @@ export default function ImageWorkbenchPage() {
         }),
       );
 
-      setDraft((prev) =>
+      setActiveDraft((prev) =>
         updatePreserveProductFidelity({
           ...prev,
           references: {
@@ -192,7 +317,7 @@ export default function ImageWorkbenchPage() {
         }),
       );
     } catch (error) {
-      setOptimizeError(getFriendlyErrorMessage("upload_failed", error));
+      setReferenceError(getFriendlyErrorMessage("upload_failed", error));
     } finally {
       setUploadingMap((prev) => ({ ...prev, [category]: false }));
     }
@@ -200,11 +325,15 @@ export default function ImageWorkbenchPage() {
 
   const handleDropFiles = (category: ReferenceCategory, files: FileList | null) => {
     if (!files?.length) return;
+    if (!draft.raw_request.trim()) {
+      setReferenceError(getFriendlyErrorMessage("empty_request"));
+      return;
+    }
     void handleUploadFiles(category, files);
   };
 
   const handleRemoveReference = (category: ReferenceCategory, localId: string) => {
-    setDraft((prev) => {
+    setActiveDraft((prev) => {
       const target = prev.references[category].find((item) => item.local_id === localId);
       if (target?.preview_url.startsWith("blob:")) {
         URL.revokeObjectURL(target.preview_url);
@@ -218,6 +347,40 @@ export default function ImageWorkbenchPage() {
         },
       });
     });
+  };
+
+  const handleModifyGeneratedImage = (output: {
+    id: string;
+    file_path?: string;
+    file_name?: string;
+    url?: string;
+    downloadUrl?: string;
+  }) => {
+    if (!output.file_path) {
+      setReferenceError("当前图片暂不支持继续修改，请重新生成后再试。");
+      return;
+    }
+
+    setReferenceError(null);
+    setActiveDraft((prev) =>
+      updatePreserveProductFidelity({
+        ...prev,
+        references: {
+          ...prev.references,
+          product: [
+            ...prev.references.product,
+            {
+              local_id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+              file_id: output.id,
+              file_path: output.file_path,
+              file_name: output.file_name || `output_${output.id}.png`,
+              mime_type: "image/png",
+              preview_url: output.url || output.downloadUrl || "",
+            },
+          ],
+        },
+      }),
+    );
   };
 
   const updateMessageById = (
@@ -256,12 +419,14 @@ export default function ImageWorkbenchPage() {
         if (TERMINAL_SUCCESS.has(status)) {
           const outputs =
             task.outputs?.map((output) => {
-              const downloadUrl = getOutputDownloadUrl(output.id);
+              const downloadUrl = getOutputDownloadUrl(taskId, output.id);
               return {
                 id: output.id,
                 kind: "image" as const,
                 url: downloadUrl,
                 downloadUrl,
+                file_path: output.file_path || undefined,
+                file_name: output.file_name || undefined,
                 status: "ready" as const,
               };
             }) ?? [];
@@ -280,10 +445,14 @@ export default function ImageWorkbenchPage() {
         }
 
         if (TERMINAL_FAILED.has(status)) {
+          const failedReason =
+            typeof task.error_message === "string" && task.error_message.trim()
+              ? task.error_message.trim()
+              : getFriendlyErrorMessage("generation_failed");
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
             system_status: "error",
-            error_message: getFriendlyErrorMessage("generation_failed"),
+            error_message: failedReason,
             generated_outputs: message.generated_outputs.map((output) => ({
               ...output,
               status: "failed",
@@ -343,6 +512,7 @@ export default function ImageWorkbenchPage() {
     };
 
     setOptimizeError(null);
+    setReferenceError(null);
     setOptimizeLoading(true);
     setIsSubmitting(true);
 
@@ -421,7 +591,7 @@ export default function ImageWorkbenchPage() {
         messageId: message.id,
         taskId,
       });
-      setDraft((prev) => ({ ...prev, raw_request: "" }));
+      setActiveDraft((prev) => ({ ...prev, raw_request: "" }));
     } catch (error) {
       const errorMessage = getFriendlyErrorMessage("submit_failed", error);
       setOptimizeError(errorMessage);
@@ -441,15 +611,16 @@ export default function ImageWorkbenchPage() {
   };
 
   const sending = optimizeLoading || isSubmitting;
-  const canSend = draft.raw_request.trim().length > 0 && !sending;
+  const hasValidSize = selectedSizeOption !== "other" || customSizeReady;
+  const canSend = draft.raw_request.trim().length > 0 && !sending && hasValidSize;
 
   return (
     <main className="h-dvh bg-slate-100/80 px-2.5 py-1.5 sm:px-3 sm:py-2.5">
-      <div className="mx-auto grid h-full w-full max-w-[1480px] grid-cols-1 gap-1.5 lg:grid-cols-[380px_minmax(0,1fr)_220px]">
+      <div className="mx-auto grid h-full w-full max-w-[1480px] grid-cols-1 gap-1.5 lg:grid-cols-[304px_minmax(0,1fr)_280px] lg:gap-x-3">
         <aside className="order-2 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:order-1">
-          <div className="flex-1 space-y-2.5 overflow-y-auto p-2.5">
+          <div className="flex-1 space-y-2 overflow-y-auto p-2">
             <div>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">尺寸选择</div>
+              <div className="mb-1 text-sm font-semibold text-slate-700">尺寸选择</div>
               <div className="grid grid-cols-2 gap-1.5 text-sm text-slate-700">
                 {[
                   { label: "1600 × 1600", value: "1600x1600" as const },
@@ -468,14 +639,23 @@ export default function ImageWorkbenchPage() {
                       checked={selectedSizeOption === option.value}
                       onChange={() => {
                         if (option.value === "other") {
-                          const nextCustom = customSizeInput.trim();
-                          setDraft((prev) => ({
+                          const custom = parseCustomSize(draft.size);
+                          const width = custom.width;
+                          const height = custom.height;
+                          setCustomWidthInput(width);
+                          setCustomHeightInput(height);
+                          setActiveDraft((prev) => ({
                             ...prev,
-                            size: nextCustom || prev.size,
+                            size:
+                              POSITIVE_INTEGER_PATTERN.test(width) && POSITIVE_INTEGER_PATTERN.test(height)
+                                ? `${width}x${height}`
+                                : "",
                           }));
                           return;
                         }
-                        setDraft((prev) => ({ ...prev, size: option.value }));
+                        setCustomWidthInput("");
+                        setCustomHeightInput("");
+                        setActiveDraft((prev) => ({ ...prev, size: option.value }));
                       }}
                     />
                     {option.label}
@@ -483,27 +663,56 @@ export default function ImageWorkbenchPage() {
                 ))}
               </div>
               {selectedSizeOption === "other" ? (
-                <input
-                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
-                  placeholder="例如：1200 × 628"
-                  value={customSizeInput || draft.size}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setCustomSizeInput(value);
-                    setDraft((prev) => ({ ...prev, size: value }));
-                  }}
-                />
+                <div className="mt-1.5 space-y-1.5">
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
+                      placeholder="宽度"
+                      inputMode="numeric"
+                      value={customWidthInput}
+                      onChange={(e) => {
+                        const value = e.target.value.replace(/[^\d]/g, "");
+                        setCustomWidthInput(value);
+                        setActiveDraft((prev) => ({
+                          ...prev,
+                          size:
+                            POSITIVE_INTEGER_PATTERN.test(value) && POSITIVE_INTEGER_PATTERN.test(customHeightInput)
+                              ? `${value}x${customHeightInput}`
+                              : "",
+                        }));
+                      }}
+                    />
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
+                      placeholder="高度"
+                      inputMode="numeric"
+                      value={customHeightInput}
+                      onChange={(e) => {
+                        const value = e.target.value.replace(/[^\d]/g, "");
+                        setCustomHeightInput(value);
+                        setActiveDraft((prev) => ({
+                          ...prev,
+                          size:
+                            POSITIVE_INTEGER_PATTERN.test(customWidthInput) && POSITIVE_INTEGER_PATTERN.test(value)
+                              ? `${customWidthInput}x${value}`
+                              : "",
+                        }));
+                      }}
+                    />
+                  </div>
+                  {!customSizeReady ? <div className="text-xs text-amber-600">请输入有效的正整数宽高</div> : null}
+                </div>
               ) : null}
             </div>
 
             <div>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">风格需求</div>
+              <div className="mb-1 text-sm font-semibold text-slate-700">风格需求</div>
               <input
                 className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
                 placeholder="例：清爽、明亮、度假感、夏日氛围"
                 value={draft.style_preference}
                 onChange={(e) =>
-                  setDraft((prev) => ({
+                  setActiveDraft((prev) => ({
                     ...prev,
                     style_preference: e.target.value,
                   }))
@@ -512,7 +721,7 @@ export default function ImageWorkbenchPage() {
             </div>
 
             <div>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">参考图片</div>
+              <div className="mb-1 text-sm font-semibold text-slate-700">参考图片</div>
               <div className="space-y-2">
                 {REFERENCE_GROUPS.map((item) => {
                   const category = item.key;
@@ -520,7 +729,7 @@ export default function ImageWorkbenchPage() {
                     <div key={item.key} className="space-y-1">
                       <div className="text-xs font-medium text-slate-600">{item.label}</div>
                       <label
-                        className="block cursor-pointer rounded-xl border border-dashed border-slate-300 bg-white/80 px-2.5 py-2.5 text-center text-xs text-slate-500 transition hover:border-violet-300 hover:text-violet-600"
+                        className="block cursor-pointer rounded-xl border border-dashed border-slate-300 bg-white/80 px-2.5 py-[1.1rem] text-center text-xs text-slate-500 transition hover:border-violet-300 hover:text-violet-600"
                         onDragOver={(event) => {
                           event.preventDefault();
                         }}
@@ -570,45 +779,51 @@ export default function ImageWorkbenchPage() {
                   );
                 })}
               </div>
+              {referenceError ? (
+                <div className="mt-1.5 rounded-xl border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-sm text-rose-600">
+                  {referenceError}
+                </div>
+              ) : null}
             </div>
           </div>
         </aside>
 
         <section className="order-1 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/75 backdrop-blur shadow-[0_1px_2px_rgba(15,23,42,0.03)] lg:order-2">
-          <div className="flex-1 space-y-2.5 overflow-y-auto px-3 py-3 sm:px-4">
+          <div className="min-h-0 max-h-[58vh] flex-1 space-y-2.5 overflow-y-auto px-3 py-2 sm:px-4">
             {activeConversation?.messages.length ? (
               activeConversation.messages.map((message) => (
                 <article key={message.id} className="space-y-2">
-                  <div className="ml-auto max-w-[68%] rounded-2xl bg-violet-600 px-3 py-2 text-sm text-white shadow-sm">
+                  <div className="ml-auto max-w-[54%] rounded-2xl bg-violet-500/90 px-3 py-2 text-sm text-white shadow-sm">
                     {message.user_input}
                   </div>
 
                   <div className="max-w-[78%] space-y-1.5 rounded-2xl border border-slate-200 bg-slate-100/60 p-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${getMessageStatusBadge(
-                          message.system_status,
-                        )}`}
-                      >
-                        {message.system_status === "done"
-                          ? "生成完成"
-                          : message.system_status === "error"
-                            ? "生成失败"
-                            : "生成中"}
-                      </span>
-                      {message.optimized_prompt ? (
-                        <details className="max-w-[72%] rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-right">
-                          <summary className="cursor-pointer text-xs font-medium text-slate-600">
-                            查看优化后的提示词
-                          </summary>
-                          <div className="mt-1 text-left text-xs text-slate-500">{message.optimized_prompt}</div>
-                        </details>
-                      ) : null}
-                    </div>
-
-                    {message.error_message ? (
-                      <div className="text-xs text-rose-600">{message.error_message}</div>
-                    ) : null}
+                    {message.system_status === "error" && message.error_message ? (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="truncate text-xs text-rose-600">{message.error_message}</div>
+                        <span className="inline-flex shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 ring-1 ring-rose-200">
+                          失败
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${getMessageStatusBadge(
+                            message.system_status,
+                          )}`}
+                        >
+                          {message.system_status === "done" ? "生成完成" : "生成中"}
+                        </span>
+                        {message.optimized_prompt ? (
+                          <details className="max-w-[72%] rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-right">
+                            <summary className="cursor-pointer text-xs font-medium text-slate-600">
+                              查看优化后的提示词
+                            </summary>
+                            <div className="mt-1 text-left text-xs text-slate-500">{message.optimized_prompt}</div>
+                          </details>
+                        ) : null}
+                      </div>
+                    )}
 
                     <div className="grid gap-1.5 sm:grid-cols-2">
                       {message.generated_outputs.map((output) => (
@@ -617,14 +832,6 @@ export default function ImageWorkbenchPage() {
                           className="flex flex-col rounded-lg border border-slate-200 bg-white p-1.5"
                         >
                           <div className="aspect-[4/3] w-full rounded-md border border-dashed border-slate-200 bg-slate-100/70" />
-                          <div className="mt-1.5 text-[11px] text-slate-500">
-                            状态：
-                            {output.status === "ready"
-                              ? "可下载"
-                              : output.status === "failed"
-                                ? "失败"
-                                : "待结果"}
-                          </div>
                           {output.url ? (
                             <Image
                               src={output.url}
@@ -635,17 +842,27 @@ export default function ImageWorkbenchPage() {
                               unoptimized
                             />
                           ) : null}
-                          <button
-                            type="button"
-                            disabled={!output.downloadUrl}
-                            onClick={() => {
-                              if (!output.downloadUrl) return;
-                              window.open(output.downloadUrl, "_blank", "noopener,noreferrer");
-                            }}
-                            className="mt-auto self-end pt-1.5 text-xs font-medium text-violet-600 hover:text-violet-700 disabled:cursor-not-allowed disabled:text-slate-400"
-                          >
-                            下载图片
-                          </button>
+                          <div className="mt-auto flex items-center justify-end gap-2 pt-1.5">
+                            <button
+                              type="button"
+                              disabled={!output.file_path}
+                              onClick={() => handleModifyGeneratedImage(output)}
+                              className="text-xs font-medium text-slate-600 hover:text-slate-800 disabled:cursor-not-allowed disabled:text-slate-400"
+                            >
+                              修改此图
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!output.downloadUrl}
+                              onClick={() => {
+                                if (!output.downloadUrl) return;
+                                window.open(output.downloadUrl, "_blank", "noopener,noreferrer");
+                              }}
+                              className="text-xs font-medium text-violet-600 hover:text-violet-700 disabled:cursor-not-allowed disabled:text-slate-400"
+                            >
+                              下载图片
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -653,31 +870,31 @@ export default function ImageWorkbenchPage() {
                 </article>
               ))
             ) : (
-              <div className="flex h-full min-h-[260px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-100/70 text-sm text-slate-500">
+              <div className="flex h-full min-h-[200px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-100/70 text-sm text-slate-500">
                 输入需求开始创建图片对话任务。
               </div>
             )}
           </div>
 
-          <div className="border-t border-slate-200/80 bg-white/75 backdrop-blur px-3 py-2 sm:px-4">
+          <div className="border-t border-slate-200/80 bg-white/75 backdrop-blur px-3 py-1.5 sm:px-4">
             <div className="relative">
               <textarea
                 className="w-full resize-none rounded-3xl border border-slate-200 bg-slate-50 pl-3.5 pr-11 pt-2.5 pb-2.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 shadow-[inset_0_1px_2px_rgba(15,23,42,0.04)] focus:bg-white focus:ring-2 focus:ring-violet-200"
                 rows={2}
                 value={draft.raw_request}
                 onChange={(e) =>
-                  setDraft((prev) => ({
+                  setActiveDraft((prev) => ({
                     ...prev,
                     raw_request: e.target.value,
                   }))
                 }
-                placeholder="输入原始需求，或继续补充修改..."
+                placeholder="请填写需求"
               />
               <button
                 type="button"
                 onClick={handleSubmitTask}
                 disabled={!canSend}
-                className={`absolute right-2 bottom-2 inline-flex h-8 w-8 items-center justify-center rounded-xl transition ${
+                className={`absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl transition ${
                   canSend ? "bg-violet-600 hover:bg-violet-500" : "bg-slate-200"
                 }`}
                 aria-label={sending ? "处理中" : "发送并生成"}
@@ -685,15 +902,10 @@ export default function ImageWorkbenchPage() {
                 {sending ? <LoadingIcon /> : <SendIcon disabled={!canSend} />}
               </button>
             </div>
-            {optimizeError ? (
-              <div className="mt-1.5 rounded-xl border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-sm text-rose-600">
-                {optimizeError}
-              </div>
-            ) : null}
           </div>
         </section>
 
-        <aside className="order-3 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur">
+        <aside className="order-3 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:ml-2">
           <div className="flex items-center justify-between border-b border-slate-200/80 px-3 py-2">
             <span className="text-sm font-semibold text-slate-700">对话列表</span>
             <button
@@ -707,25 +919,37 @@ export default function ImageWorkbenchPage() {
           </div>
           <div className="flex-1 space-y-1 overflow-y-auto p-1.5">
             {conversations.map((conversation) => (
-              <button
-                key={conversation.conversation_id}
-                type="button"
-                onClick={() => setActiveConversationId(conversation.conversation_id)}
-                className={`w-full rounded-lg border px-2 py-1 text-left transition ${
-                  activeConversationId === conversation.conversation_id
-                    ? "border-violet-300 bg-violet-50/90 text-violet-800 shadow-[0_4px_12px_rgba(124,58,237,0.15)]"
-                    : "border-slate-200/90 bg-white/80 text-slate-700 hover:bg-slate-100/70"
-                }`}
-              >
-                <div className="truncate text-sm font-medium leading-5">{conversation.title}</div>
-                <div
-                  className={`mt-0.5 truncate text-[10px] ${
-                    activeConversationId === conversation.conversation_id ? "text-violet-400/90" : "text-slate-400/80"
+              <div key={conversation.conversation_id} className="group relative">
+                <button
+                  type="button"
+                  onClick={() => setActiveConversationId(conversation.conversation_id)}
+                  className={`w-full rounded-lg border px-2 py-1 text-left transition ${
+                    activeConversationId === conversation.conversation_id
+                      ? "border-violet-300 bg-violet-50/90 text-violet-800 shadow-[0_4px_12px_rgba(124,58,237,0.15)]"
+                      : "border-slate-200/90 bg-white/80 text-slate-700 hover:bg-slate-100/70"
                   }`}
                 >
-                  {new Date(conversation.updated_at).toLocaleString()}
-                </div>
-              </button>
+                  <div className="truncate pr-5 text-sm font-medium leading-5">{conversation.title}</div>
+                  <div
+                    className={`mt-0.5 truncate text-[10px] ${
+                      activeConversationId === conversation.conversation_id ? "text-violet-400/90" : "text-slate-400/80"
+                    }`}
+                  >
+                    {new Date(conversation.updated_at).toLocaleString()}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleDeleteConversation(conversation.conversation_id);
+                  }}
+                  className="absolute right-1.5 top-1.5 hidden h-5 w-5 items-center justify-center rounded-md border border-slate-200 bg-white/95 text-[11px] text-slate-500 shadow-sm transition hover:border-rose-200 hover:text-rose-600 group-hover:inline-flex"
+                  aria-label="删除对话"
+                >
+                  ×
+                </button>
+              </div>
             ))}
           </div>
         </aside>

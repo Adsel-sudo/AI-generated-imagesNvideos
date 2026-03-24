@@ -1,8 +1,8 @@
 import type { GenerationTarget, TaskDetail } from "@/src/types/api";
 
 export interface UploadedReferenceFile {
-  file_id?: string;
-  role?: string;
+  file_path: string;
+  role: string;
   file_name?: string;
   mime_type?: string;
   width?: number;

@@ -25,6 +25,6 @@ export function getTaskDetail(taskId: string) {
   return request<TaskDetail>(`/api/tasks/${taskId}`);
 }
 
-export function getOutputDownloadUrl(outputId: string) {
-  return `${getApiBaseUrl()}/outputs/${outputId}`;
+export function getOutputDownloadUrl(taskId: string, outputId: string) {
+  return `${getApiBaseUrl()}/api/tasks/${taskId}/outputs/${outputId}`;
 }
