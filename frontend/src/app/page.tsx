@@ -619,12 +619,12 @@ export default function ImageWorkbenchPage() {
   const canSend = draft.raw_request.trim().length > 0 && !sending && hasValidSize;
 
   return (
-    <main className="h-dvh bg-slate-100/80 px-2.5 py-1.5 sm:px-3 sm:py-2.5">
-      <div className="mx-auto grid h-full w-full max-w-[1480px] grid-cols-1 gap-1.5 lg:grid-cols-[304px_minmax(0,1fr)_280px] lg:gap-x-3">
+    <main className="h-[calc(100dvh-60px)] overflow-hidden bg-slate-100/80 px-2.5 py-1.5 sm:px-3 sm:py-2">
+      <div className="mx-auto grid h-full w-full max-w-[1480px] grid-cols-1 gap-1.5 lg:grid-cols-[304px_minmax(0,1fr)_280px] lg:gap-x-2.5">
         <aside className="order-2 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:order-1">
-          <div className="flex-1 space-y-2 overflow-y-auto p-2">
+          <div className="flex-1 space-y-0 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
             <div>
-              <div className="mb-1 text-sm font-semibold text-slate-700">尺寸选择</div>
+              <div className="mb-2 text-sm font-semibold text-slate-700">尺寸选择</div>
               <div className="grid grid-cols-2 gap-1.5 text-sm text-slate-700">
                 {[
                   { label: "1600 × 1600", value: "1600x1600" as const },
@@ -709,8 +709,8 @@ export default function ImageWorkbenchPage() {
               ) : null}
             </div>
 
-            <div>
-              <div className="mb-1 text-sm font-semibold text-slate-700">风格需求</div>
+            <div className="mt-2 border-t border-slate-200/80 pt-2">
+              <div className="mb-2 text-sm font-semibold text-slate-700">风格需求</div>
               <input
                 className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
                 placeholder="例：清爽、明亮、度假感、夏日氛围"
@@ -724,8 +724,13 @@ export default function ImageWorkbenchPage() {
               />
             </div>
 
-            <div>
-              <div className="mb-1 text-sm font-semibold text-slate-700">参考图片</div>
+            <div className="mt-2 border-t border-slate-200/80 pt-2">
+              <div className="mb-2 text-sm font-semibold text-slate-700">参考图片</div>
+              {referenceError ? (
+                <div className="mb-2 rounded-xl border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-sm text-rose-600">
+                  {referenceError}
+                </div>
+              ) : null}
               <div className="space-y-2">
                 {REFERENCE_GROUPS.map((item) => {
                   const category = item.key;
@@ -783,17 +788,12 @@ export default function ImageWorkbenchPage() {
                   );
                 })}
               </div>
-              {referenceError ? (
-                <div className="mt-1.5 rounded-xl border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-sm text-rose-600">
-                  {referenceError}
-                </div>
-              ) : null}
             </div>
           </div>
         </aside>
 
-        <section className="order-1 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/75 backdrop-blur shadow-[0_1px_2px_rgba(15,23,42,0.03)] lg:order-2">
-          <div className="min-h-0 max-h-[58vh] flex-1 space-y-2.5 overflow-y-auto px-3 py-2 sm:px-4">
+        <section className="order-1 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:order-2">
+          <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
             {activeConversation?.messages.length ? (
               activeConversation.messages.map((message) => (
                 <article key={message.id} className="space-y-2">
@@ -880,10 +880,10 @@ export default function ImageWorkbenchPage() {
             )}
           </div>
 
-          <div className="border-t border-slate-200/80 bg-white/75 backdrop-blur px-3 py-1.5 sm:px-4">
+          <div className="mt-1.5 px-[7px] pb-[1px] pt-1.5 sm:px-[11px]">
             <div className="relative">
               <textarea
-                className="w-full resize-none rounded-3xl border border-slate-200 bg-slate-50 pl-3.5 pr-11 pt-2.5 pb-2.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 shadow-[inset_0_1px_2px_rgba(15,23,42,0.04)] focus:bg-white focus:ring-2 focus:ring-violet-200"
+                className="w-full resize-none rounded-2xl border border-slate-200 bg-white pl-3.5 pr-11 pt-2.5 pb-2.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 shadow-[inset_0_1px_2px_rgba(15,23,42,0.04)] focus:bg-white focus:ring-2 focus:ring-violet-200"
                 rows={2}
                 value={draft.raw_request}
                 onChange={(e) =>
@@ -898,7 +898,7 @@ export default function ImageWorkbenchPage() {
                 type="button"
                 onClick={handleSubmitTask}
                 disabled={!canSend}
-                className={`absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl transition ${
+                className={`absolute right-[10px] top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl transition ${
                   canSend ? "bg-violet-600 hover:bg-violet-500" : "bg-slate-200"
                 }`}
                 aria-label={sending ? "处理中" : "发送并生成"}
@@ -909,8 +909,8 @@ export default function ImageWorkbenchPage() {
           </div>
         </section>
 
-        <aside className="order-3 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:ml-2">
-          <div className="flex items-center justify-between border-b border-slate-200/80 px-3 py-2">
+        <aside className="order-3 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur">
+          <div className="flex items-center justify-between border-b border-slate-200/80 px-3 py-2 sm:px-4">
             <span className="text-sm font-semibold text-slate-700">对话列表</span>
             <button
               type="button"
@@ -921,9 +921,9 @@ export default function ImageWorkbenchPage() {
               +新对话
             </button>
           </div>
-          <div className="flex-1 space-y-1 overflow-y-auto p-1.5">
+          <div className="flex-1 space-y-0 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
             {conversations.map((conversation) => (
-              <div key={conversation.conversation_id} className="group relative">
+              <div key={conversation.conversation_id} className="group relative mb-2">
                 <button
                   type="button"
                   onClick={() => setActiveConversationId(conversation.conversation_id)}
