@@ -75,6 +75,7 @@ export const buildGeneratePayload = ({
   optimized_prompt_cn,
   generation_prompt,
   structured_summary,
+  n_outputs: DEFAULT_N_OUTPUTS,
   references: mapReferencesToPayload(draft),
   generation_targets: [parseSizeToTarget(resolveDraftSize(draft))],
   usage_options: buildUsageOptions(draft),

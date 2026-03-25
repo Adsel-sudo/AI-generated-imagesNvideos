@@ -38,6 +38,7 @@ export interface GenerateTaskRequestPayload {
   optimized_prompt_cn: string;
   generation_prompt: string;
   structured_summary: Record<string, unknown>;
+  n_outputs?: number;
   references?: UploadedReferenceFile[];
   generation_targets?: GenerationTarget[];
   usage_options?: Record<string, unknown>;

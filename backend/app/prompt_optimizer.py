@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .constants import DEFAULT_N_OUTPUTS
+
 
 SAFE_MODE_KEYWORDS = (
     "婴儿",
@@ -147,12 +149,20 @@ class PromptOptimizer:
                     "aspect_ratio": raw.get("aspect_ratio"),
                     "width": raw.get("width"),
                     "height": raw.get("height"),
-                    "n_outputs": int(raw.get("n_outputs") or 1),
+                    "n_outputs": int(raw.get("n_outputs") or DEFAULT_N_OUTPUTS),
                 }
             )
 
         if not normalized:
-            normalized.append({"target_type": "pc", "aspect_ratio": "1:1", "width": None, "height": None, "n_outputs": 1})
+            normalized.append(
+                {
+                    "target_type": "pc",
+                    "aspect_ratio": "1:1",
+                    "width": None,
+                    "height": None,
+                    "n_outputs": DEFAULT_N_OUTPUTS,
+                }
+            )
 
         return normalized
 

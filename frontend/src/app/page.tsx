@@ -27,6 +27,7 @@ import {
   type ReferenceCategory,
   type WorkbenchDraft,
 } from "@/src/types/workbench";
+import type { GeneratedOutput } from "@/src/types/conversation";
 
 type SizeOption = "1:1" | "16:9" | "4:3" | "3:2" | "other";
 
@@ -144,6 +145,10 @@ export default function ImageWorkbenchPage() {
 
   const [optimizeLoading, setOptimizeLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [previewState, setPreviewState] = useState<{
+    outputs: GeneratedOutput[];
+    activeIndex: number;
+  } | null>(null);
   const [, setOptimizeError] = useState<string | null>(null);
   const [referenceError, setReferenceError] = useState<string | null>(null);
   const [uploadingMap, setUploadingMap] = useState<Record<ReferenceCategory, boolean>>({
@@ -174,6 +179,59 @@ export default function ImageWorkbenchPage() {
   }, [draft.presetSize, draft.sizeMode]);
 
   const customSizeReady = ASPECT_RATIO_PATTERN.test(draft.customAspectRatio);
+  const previewOutput = useMemo(() => {
+    if (!previewState) return null;
+    return previewState.outputs[previewState.activeIndex] ?? null;
+  }, [previewState]);
+  const previewHasMultiple = (previewState?.outputs.length || 0) > 1;
+
+  const handleOpenPreview = (outputs: GeneratedOutput[], activeIndex: number) => {
+    if (!outputs.length) return;
+    const normalizedIndex = Math.max(0, Math.min(activeIndex, outputs.length - 1));
+    setPreviewState({
+      outputs,
+      activeIndex: normalizedIndex,
+    });
+  };
+
+  const getPreviewableOutputs = (outputs: GeneratedOutput[]) =>
+    outputs.filter((item) => Boolean(item.url) && item.status === "ready");
+
+  const handleOpenPreviewById = (outputs: GeneratedOutput[], outputId: string) => {
+    const previewableOutputs = getPreviewableOutputs(outputs);
+    if (!previewableOutputs.length) return;
+    const activeIndex = Math.max(
+      0,
+      previewableOutputs.findIndex((item) => item.id === outputId),
+    );
+    handleOpenPreview(previewableOutputs, activeIndex);
+  };
+
+  const handleClosePreview = useCallback(() => {
+    setPreviewState(null);
+  }, []);
+
+  const handlePreviewPrev = useCallback(() => {
+    setPreviewState((prev) => {
+      if (!prev || prev.outputs.length <= 1) return prev;
+      const nextIndex = (prev.activeIndex - 1 + prev.outputs.length) % prev.outputs.length;
+      return {
+        ...prev,
+        activeIndex: nextIndex,
+      };
+    });
+  }, []);
+
+  const handlePreviewNext = useCallback(() => {
+    setPreviewState((prev) => {
+      if (!prev || prev.outputs.length <= 1) return prev;
+      const nextIndex = (prev.activeIndex + 1) % prev.outputs.length;
+      return {
+        ...prev,
+        activeIndex: nextIndex,
+      };
+    });
+  }, []);
 
   const activeConversation = useMemo(
     () => conversations.find((item) => item.conversation_id === activeConversationId) ?? null,
@@ -258,6 +316,30 @@ export default function ImageWorkbenchPage() {
     if (!activeConversationId) return;
     scrollToConversationBottom("smooth");
   }, [activeConversation?.messages.length, activeConversationId, scrollToConversationBottom]);
+
+  useEffect(() => {
+    if (!previewState) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        handleClosePreview();
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        handlePreviewPrev();
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        handlePreviewNext();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleClosePreview, handlePreviewNext, handlePreviewPrev, previewState]);
 
   useEffect(() => {
     if (!activeConversationId || !activeConversationStatusSignature) return;
@@ -948,17 +1030,35 @@ export default function ImageWorkbenchPage() {
                         {message.generated_outputs.map((output) => (
                           <div
                             key={output.id}
-                            className="flex flex-col rounded-lg border border-slate-200 bg-white p-1.5"
+                            className="flex h-full flex-col rounded-lg border border-slate-200 bg-white p-1.5"
                           >
                             {output.url ? (
-                              <Image
-                                src={output.url}
-                                alt="生成结果"
-                                width={768}
-                                height={576}
-                                className="h-auto w-full rounded-md border border-slate-200 object-cover"
-                                unoptimized
-                              />
+                              <div className="space-y-1.5">
+                                <button
+                                  type="button"
+                                  className="group relative block w-full overflow-hidden rounded-md border border-slate-200"
+                                  onClick={() => handleOpenPreviewById(message.generated_outputs, output.id)}
+                                  aria-label="查看大图"
+                                >
+                                  <div className="aspect-[4/3] w-full overflow-hidden">
+                                    <Image
+                                      src={output.url}
+                                      alt="生成结果"
+                                      width={768}
+                                      height={576}
+                                      className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.01]"
+                                      unoptimized
+                                    />
+                                  </div>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="text-xs font-medium text-slate-500 transition hover:text-slate-700"
+                                  onClick={() => handleOpenPreviewById(message.generated_outputs, output.id)}
+                                >
+                                  查看大图
+                                </button>
+                              </div>
                             ) : (
                               <div className="aspect-[4/3] w-full rounded-md border border-slate-200 bg-slate-100/70" />
                             )}
@@ -1080,6 +1180,79 @@ export default function ImageWorkbenchPage() {
           </div>
         </aside>
       </div>
+
+      {previewState && previewOutput?.url ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-3 py-4 backdrop-blur-[1px]"
+          onClick={handleClosePreview}
+          role="dialog"
+          aria-modal="true"
+          aria-label="图片预览"
+        >
+          <div
+            className="relative w-full max-w-5xl rounded-2xl border border-slate-200/20 bg-slate-900/80 p-2 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={handleClosePreview}
+              className="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-800/80 text-lg text-white transition hover:bg-slate-700"
+              aria-label="关闭预览"
+            >
+              ×
+            </button>
+
+            {previewHasMultiple ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handlePreviewPrev}
+                  className="absolute left-3 top-1/2 z-10 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-slate-800/85 text-xl text-white transition hover:bg-slate-700"
+                  aria-label="上一张"
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePreviewNext}
+                  className="absolute right-3 top-1/2 z-10 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-slate-800/85 text-xl text-white transition hover:bg-slate-700"
+                  aria-label="下一张"
+                >
+                  ›
+                </button>
+              </>
+            ) : null}
+
+            <div className="max-h-[78vh] overflow-hidden rounded-xl bg-slate-950/30">
+              <Image
+                src={previewOutput.url}
+                alt="预览大图"
+                width={1600}
+                height={1200}
+                className="h-auto max-h-[78vh] w-full object-contain"
+                unoptimized
+              />
+            </div>
+
+            <div className="mt-2 flex items-center justify-between px-1 pb-1">
+              <div className="text-xs text-slate-200/85">
+                {previewState.activeIndex + 1} / {previewState.outputs.length}
+              </div>
+              <button
+                type="button"
+                disabled={!previewOutput.downloadUrl}
+                onClick={() => {
+                  if (!previewOutput.downloadUrl) return;
+                  window.open(previewOutput.downloadUrl, "_blank", "noopener,noreferrer");
+                }}
+                className="inline-flex items-center rounded-lg bg-violet-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-slate-500"
+              >
+                下载图片
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

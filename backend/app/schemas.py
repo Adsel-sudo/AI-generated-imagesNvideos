@@ -75,7 +75,7 @@ class GenerationTargetInput(BaseModel):
     aspect_ratio: Optional[str] = None
     width: Optional[int] = Field(default=None, gt=0)
     height: Optional[int] = Field(default=None, gt=0)
-    n_outputs: int = Field(default=1, ge=1, le=12)
+    n_outputs: int = Field(default=DEFAULT_N_OUTPUTS, ge=1, le=12)
 
 
 class PromptOptimizeRequest(BaseModel):
