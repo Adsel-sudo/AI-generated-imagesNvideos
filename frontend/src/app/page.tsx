@@ -802,7 +802,7 @@ export default function ImageWorkbenchPage() {
           </div>
         </aside>
 
-        <section className="order-1 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:order-2">
+        <section className="order-1 flex h-[calc(100%-5px)] min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:order-2">
           <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
             {activeConversation?.messages.length ? (
               activeConversation.messages.map((message, index) => (
@@ -939,7 +939,7 @@ export default function ImageWorkbenchPage() {
             </div>
             <div className="flex-1 space-y-0 overflow-y-auto px-3 py-3 sm:px-4">
               {conversations.map((conversation) => (
-                <div key={conversation.conversation_id} className="group relative mb-2">
+                <div key={conversation.conversation_id} className="group relative mb-[10px]">
                   <button
                     type="button"
                     onClick={() => setActiveConversationId(conversation.conversation_id)}
