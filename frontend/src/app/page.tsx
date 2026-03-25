@@ -1,6 +1,6 @@
 "use client";
 
-import { type SetStateAction, useEffect, useMemo, useState } from "react";
+import { type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
   generateImageTask,
@@ -18,6 +18,7 @@ import {
 import {
   buildGeneratePayload,
   buildOptimizePayload,
+  resolveDraftSize,
 } from "@/src/lib/conversation/payload";
 import { getFriendlyErrorMessage } from "@/src/lib/error-mapping";
 import type { Conversation } from "@/src/types/conversation";
@@ -38,6 +39,7 @@ const REFERENCE_GROUPS: Array<{ label: string; key: ReferenceCategory }> = [
 ];
 const POLL_INTERVAL_MS = 2000;
 const POLL_MAX_ATTEMPTS = 30;
+const PANEL_SECTION_SPACING = "py-3";
 
 const getSizeDisplayText = (size: string) => {
   if (size === "1600x1600") return "1600 × 1600";
@@ -54,14 +56,6 @@ const sleep = (ms: number) =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-
-const parseCustomSize = (size: string): { width: string; height: string } => {
-  const matched = (size || "").match(/^(\d+)x(\d+)$/i);
-  return {
-    width: matched?.[1] ?? "",
-    height: matched?.[2] ?? "",
-  };
-};
 
 function SendIcon({ disabled }: { disabled: boolean }) {
   return (
@@ -114,8 +108,6 @@ export default function ImageWorkbenchPage() {
   const [draftByConversationId, setDraftByConversationId] = useState<Record<string, WorkbenchDraft>>({});
 
   const [draft, setDraft] = useState<WorkbenchDraft>(createEmptyWorkbenchDraft());
-  const [customWidthInput, setCustomWidthInput] = useState("");
-  const [customHeightInput, setCustomHeightInput] = useState("");
 
   const [optimizeLoading, setOptimizeLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -127,21 +119,48 @@ export default function ImageWorkbenchPage() {
     pose: false,
     style: false,
   });
+  const conversationEndRef = useRef<HTMLDivElement | null>(null);
+  const currentMessageRef = useRef<HTMLElement | null>(null);
 
   const selectedSizeOption: SizeOption = useMemo(() => {
-    if (PRESET_SIZES.includes(draft.size as (typeof PRESET_SIZES)[number])) {
-      return draft.size as SizeOption;
+    if (draft.sizeMode === "custom") {
+      return "other";
     }
-    return "other";
-  }, [draft.size]);
+    if (PRESET_SIZES.includes(draft.presetSize as (typeof PRESET_SIZES)[number])) {
+      return draft.presetSize as SizeOption;
+    }
+    return "1600x1600";
+  }, [draft.presetSize, draft.sizeMode]);
 
-  const customWidthValid = POSITIVE_INTEGER_PATTERN.test(customWidthInput);
-  const customHeightValid = POSITIVE_INTEGER_PATTERN.test(customHeightInput);
+  const customWidthValid = POSITIVE_INTEGER_PATTERN.test(draft.customWidth);
+  const customHeightValid = POSITIVE_INTEGER_PATTERN.test(draft.customHeight);
   const customSizeReady = customWidthValid && customHeightValid;
 
   const activeConversation = useMemo(
     () => conversations.find((item) => item.conversation_id === activeConversationId) ?? null,
     [activeConversationId, conversations],
+  );
+  const activeConversationStatusSignature = useMemo(
+    () =>
+      activeConversation?.messages
+        .map((message) => `${message.id}:${message.system_status}:${message.generated_outputs.map((output) => output.status).join(",")}`)
+        .join("|") ?? "",
+    [activeConversation],
+  );
+
+  const scrollToConversationBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    conversationEndRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
+
+  const scrollToCurrentMessage = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      if (currentMessageRef.current) {
+        currentMessageRef.current.scrollIntoView({ behavior, block: "nearest" });
+        return;
+      }
+      scrollToConversationBottom(behavior);
+    },
+    [scrollToConversationBottom],
   );
 
   useEffect(() => {
@@ -166,9 +185,6 @@ export default function ImageWorkbenchPage() {
     const existingDraft = draftByConversationId[activeConversationId];
     if (existingDraft) {
       setDraft(existingDraft);
-      const custom = parseCustomSize(existingDraft.size);
-      setCustomWidthInput(PRESET_SIZES.includes(existingDraft.size as (typeof PRESET_SIZES)[number]) ? "" : custom.width);
-      setCustomHeightInput(PRESET_SIZES.includes(existingDraft.size as (typeof PRESET_SIZES)[number]) ? "" : custom.height);
       setOptimizeError(null);
       setReferenceError(null);
       return;
@@ -189,11 +205,24 @@ export default function ImageWorkbenchPage() {
       ...prev,
       [activeConversationId]: nextDraft,
     }));
-    setCustomWidthInput("");
-    setCustomHeightInput("");
     setOptimizeError(null);
     setReferenceError(null);
   }, [activeConversationId, draftByConversationId, sessionId]);
+
+  useEffect(() => {
+    if (!activeConversationId) return;
+    scrollToConversationBottom("smooth");
+  }, [activeConversationId, scrollToConversationBottom]);
+
+  useEffect(() => {
+    if (!activeConversationId) return;
+    scrollToConversationBottom("smooth");
+  }, [activeConversation?.messages.length, activeConversationId, scrollToConversationBottom]);
+
+  useEffect(() => {
+    if (!activeConversationId || !activeConversationStatusSignature) return;
+    scrollToCurrentMessage("smooth");
+  }, [activeConversationId, activeConversationStatusSignature, scrollToCurrentMessage]);
 
   const setActiveDraft = (updater: SetStateAction<WorkbenchDraft>) => {
     setDraft((prev) => {
@@ -233,8 +262,6 @@ export default function ImageWorkbenchPage() {
       ...prev,
       [conversation.conversation_id]: nextDraft,
     }));
-    setCustomWidthInput("");
-    setCustomHeightInput("");
     setOptimizeError(null);
     setReferenceError(null);
     setActiveConversationId(conversation.conversation_id);
@@ -284,10 +311,6 @@ export default function ImageWorkbenchPage() {
 
   const handleUploadFiles = async (category: ReferenceCategory, files: FileList | null) => {
     if (!files?.length) return;
-    if (!draft.raw_request.trim()) {
-      setReferenceError(getFriendlyErrorMessage("empty_request"));
-      return;
-    }
 
     setUploadingMap((prev) => ({ ...prev, [category]: true }));
     setReferenceError(null);
@@ -325,10 +348,6 @@ export default function ImageWorkbenchPage() {
 
   const handleDropFiles = (category: ReferenceCategory, files: FileList | null) => {
     if (!files?.length) return;
-    if (!draft.raw_request.trim()) {
-      setReferenceError(getFriendlyErrorMessage("empty_request"));
-      return;
-    }
     void handleUploadFiles(category, files);
   };
 
@@ -449,10 +468,11 @@ export default function ImageWorkbenchPage() {
         }
 
         if (TERMINAL_FAILED.has(status)) {
-          const failedReason =
+          const failedReasonRaw =
             typeof task.error_message === "string" && task.error_message.trim()
               ? task.error_message.trim()
               : getFriendlyErrorMessage("generation_failed");
+          const failedReason = getFriendlyErrorMessage("generation_failed", failedReasonRaw);
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
             system_status: "error",
@@ -547,8 +567,8 @@ export default function ImageWorkbenchPage() {
     const message = createMessage({
       user_input: currentDraft.raw_request.trim(),
       system_status: "processing",
-      optimized_prompt: optimizedPromptCn,
-      size_text: getSizeDisplayText(currentDraft.size),
+      optimized_prompt: optimizedPromptCn || currentDraft.raw_request.trim(),
+      size_text: getSizeDisplayText(resolveDraftSize(currentDraft)),
       style_preference: currentDraft.style_preference.trim() || undefined,
     });
 
@@ -622,171 +642,161 @@ export default function ImageWorkbenchPage() {
     <main className="h-[calc(100dvh-60px)] overflow-hidden bg-slate-100/80 px-2.5 py-1.5 sm:px-3 sm:py-2">
       <div className="mx-auto grid h-full w-full max-w-[1480px] grid-cols-1 gap-1.5 lg:grid-cols-[304px_minmax(0,1fr)_280px] lg:gap-x-2.5">
         <aside className="order-2 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:order-1">
-          <div className="flex-1 space-y-0 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
-            <div>
-              <div className="mb-2 text-sm font-semibold text-slate-700">尺寸选择</div>
-              <div className="grid grid-cols-2 gap-1.5 text-sm text-slate-700">
-                {[
-                  { label: "1600 × 1600", value: "1600x1600" as const },
-                  { label: "1464 × 600", value: "1464x600" as const },
-                  { label: "600 × 450", value: "600x450" as const },
-                  { label: "其他", value: "other" as const },
-                ].map((option) => (
-                  <label
-                    key={option.value}
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100/70 px-2 py-1"
-                  >
-                    <input
-                      type="radio"
-                      name="size"
-                      className="h-4 w-4 border-slate-300 text-violet-600 focus:ring-violet-300"
-                      checked={selectedSizeOption === option.value}
-                      onChange={() => {
-                        if (option.value === "other") {
-                          const custom = parseCustomSize(draft.size);
-                          const width = custom.width;
-                          const height = custom.height;
-                          setCustomWidthInput(width);
-                          setCustomHeightInput(height);
+          <div className="flex-1 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
+            <div className="divide-y divide-slate-200/80">
+              <div className={`${PANEL_SECTION_SPACING} pt-0`}>
+                <div className="mb-2 text-sm font-semibold text-slate-700">尺寸选择</div>
+                <div className="grid grid-cols-2 gap-1.5 text-sm text-slate-700">
+                  {[
+                    { label: "1600 × 1600", value: "1600x1600" as const },
+                    { label: "1464 × 600", value: "1464x600" as const },
+                    { label: "600 × 450", value: "600x450" as const },
+                    { label: "其他", value: "other" as const },
+                  ].map((option) => (
+                    <label
+                      key={option.value}
+                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100/70 px-2 py-1"
+                    >
+                      <input
+                        type="radio"
+                        name="size"
+                        className="h-4 w-4 border-slate-300 text-violet-600 focus:ring-violet-300"
+                        checked={selectedSizeOption === option.value}
+                        onChange={() => {
+                          if (option.value === "other") {
+                            setActiveDraft((prev) => ({
+                              ...prev,
+                              sizeMode: "custom",
+                            }));
+                            return;
+                          }
                           setActiveDraft((prev) => ({
                             ...prev,
-                            size:
-                              POSITIVE_INTEGER_PATTERN.test(width) && POSITIVE_INTEGER_PATTERN.test(height)
-                                ? `${width}x${height}`
-                                : "",
+                            sizeMode: "preset",
+                            presetSize: option.value,
                           }));
-                          return;
-                        }
-                        setCustomWidthInput("");
-                        setCustomHeightInput("");
-                        setActiveDraft((prev) => ({ ...prev, size: option.value }));
-                      }}
-                    />
-                    {option.label}
-                  </label>
-                ))}
-              </div>
-              {selectedSizeOption === "other" ? (
-                <div className="mt-1.5 space-y-1.5">
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <input
-                      className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
-                      placeholder="宽度"
-                      inputMode="numeric"
-                      value={customWidthInput}
-                      onChange={(e) => {
-                        const value = e.target.value.replace(/[^\d]/g, "");
-                        setCustomWidthInput(value);
-                        setActiveDraft((prev) => ({
-                          ...prev,
-                          size:
-                            POSITIVE_INTEGER_PATTERN.test(value) && POSITIVE_INTEGER_PATTERN.test(customHeightInput)
-                              ? `${value}x${customHeightInput}`
-                              : "",
-                        }));
-                      }}
-                    />
-                    <input
-                      className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
-                      placeholder="高度"
-                      inputMode="numeric"
-                      value={customHeightInput}
-                      onChange={(e) => {
-                        const value = e.target.value.replace(/[^\d]/g, "");
-                        setCustomHeightInput(value);
-                        setActiveDraft((prev) => ({
-                          ...prev,
-                          size:
-                            POSITIVE_INTEGER_PATTERN.test(customWidthInput) && POSITIVE_INTEGER_PATTERN.test(value)
-                              ? `${customWidthInput}x${value}`
-                              : "",
-                        }));
-                      }}
-                    />
-                  </div>
-                  {!customSizeReady ? <div className="text-xs text-amber-600">请输入有效的正整数宽高</div> : null}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-2 border-t border-slate-200/80 pt-2">
-              <div className="mb-2 text-sm font-semibold text-slate-700">风格需求</div>
-              <input
-                className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
-                placeholder="例：清爽、明亮、度假感、夏日氛围"
-                value={draft.style_preference}
-                onChange={(e) =>
-                  setActiveDraft((prev) => ({
-                    ...prev,
-                    style_preference: e.target.value,
-                  }))
-                }
-              />
-            </div>
-
-            <div className="mt-2 border-t border-slate-200/80 pt-2">
-              <div className="mb-2 text-sm font-semibold text-slate-700">参考图片</div>
-              {referenceError ? (
-                <div className="mb-2 rounded-xl border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-sm text-rose-600">
-                  {referenceError}
-                </div>
-              ) : null}
-              <div className="space-y-2">
-                {REFERENCE_GROUPS.map((item) => {
-                  const category = item.key;
-                  return (
-                    <div key={item.key} className="space-y-1">
-                      <div className="text-xs font-medium text-slate-600">{item.label}</div>
-                      <label
-                        className="block cursor-pointer rounded-xl border border-dashed border-slate-300 bg-white/80 px-2.5 py-[1.1rem] text-center text-xs text-slate-500 transition hover:border-violet-300 hover:text-violet-600"
-                        onDragOver={(event) => {
-                          event.preventDefault();
                         }}
-                        onDrop={(event) => {
-                          event.preventDefault();
-                          handleDropFiles(category, event.dataTransfer.files);
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+                {selectedSizeOption === "other" ? (
+                  <div className="mt-1.5 space-y-1.5">
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <input
+                        className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
+                        placeholder="宽度"
+                        inputMode="numeric"
+                        value={draft.customWidth}
+                        onChange={(e) => {
+                          const value = e.target.value.replace(/[^\d]/g, "");
+                          setActiveDraft((prev) => ({
+                            ...prev,
+                            sizeMode: "custom",
+                            customWidth: value,
+                          }));
                         }}
-                      >
-                        {uploadingMap[category] ? "上传中..." : "点击或拖拽上传"}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          multiple
-                          className="hidden"
-                          onChange={(e) => {
-                            void handleUploadFiles(category, e.target.files);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-
-                      {draft.references[category].length ? (
-                        <div className="flex flex-wrap gap-1">
-                          {draft.references[category].map((asset) => (
-                            <div key={asset.local_id} className="group relative">
-                              <Image
-                                src={asset.preview_url}
-                                alt={asset.file_name || "参考图"}
-                                width={84}
-                                height={84}
-                                className="h-16 w-16 rounded-lg border border-slate-200 object-cover"
-                                unoptimized
-                              />
-                              <button
-                                type="button"
-                                className="absolute -right-1 -top-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] text-white opacity-90 hover:bg-rose-600"
-                                onClick={() => handleRemoveReference(category, asset.local_id)}
-                                aria-label={`删除${item.label}`}
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
+                      />
+                      <input
+                        className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
+                        placeholder="高度"
+                        inputMode="numeric"
+                        value={draft.customHeight}
+                        onChange={(e) => {
+                          const value = e.target.value.replace(/[^\d]/g, "");
+                          setActiveDraft((prev) => ({
+                            ...prev,
+                            sizeMode: "custom",
+                            customHeight: value,
+                          }));
+                        }}
+                      />
                     </div>
-                  );
-                })}
+                    {!customSizeReady ? <div className="text-xs text-amber-600">请输入有效的正整数宽高</div> : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className={PANEL_SECTION_SPACING}>
+                <div className="mb-2 text-sm font-semibold text-slate-700">风格需求</div>
+                <input
+                  className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
+                  placeholder="例：清爽、明亮、度假感、夏日氛围"
+                  value={draft.style_preference}
+                  onChange={(e) =>
+                    setActiveDraft((prev) => ({
+                      ...prev,
+                      style_preference: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+
+              <div className={`${PANEL_SECTION_SPACING} pb-0`}>
+                <div className="mb-2 text-sm font-semibold text-slate-700">参考图片</div>
+                {referenceError ? (
+                  <div className="mb-2 rounded-xl border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-sm text-rose-600">
+                    {referenceError}
+                  </div>
+                ) : null}
+                <div className="space-y-2">
+                  {REFERENCE_GROUPS.map((item) => {
+                    const category = item.key;
+                    return (
+                      <div key={item.key} className="space-y-1">
+                        <div className="text-xs font-medium text-slate-600">{item.label}</div>
+                        <label
+                          className="block cursor-pointer rounded-xl border border-dashed border-slate-300 bg-white/80 px-2.5 py-[1.1rem] text-center text-xs text-slate-500 transition hover:border-violet-300 hover:text-violet-600"
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            handleDropFiles(category, event.dataTransfer.files);
+                          }}
+                        >
+                          {uploadingMap[category] ? "上传中..." : "点击或拖拽上传"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => {
+                              void handleUploadFiles(category, e.target.files);
+                              e.target.value = "";
+                            }}
+                          />
+                        </label>
+
+                        {draft.references[category].length ? (
+                          <div className="flex flex-wrap gap-1">
+                            {draft.references[category].map((asset) => (
+                              <div key={asset.local_id} className="group relative">
+                                <Image
+                                  src={asset.preview_url}
+                                  alt={asset.file_name || "参考图"}
+                                  width={84}
+                                  height={84}
+                                  className="h-16 w-16 rounded-lg border border-slate-200 object-cover"
+                                  unoptimized
+                                />
+                                <button
+                                  type="button"
+                                  className="absolute -right-1 -top-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] text-white opacity-90 hover:bg-rose-600"
+                                  onClick={() => handleRemoveReference(category, asset.local_id)}
+                                  aria-label={`删除${item.label}`}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -795,8 +805,12 @@ export default function ImageWorkbenchPage() {
         <section className="order-1 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:order-2">
           <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
             {activeConversation?.messages.length ? (
-              activeConversation.messages.map((message) => (
-                <article key={message.id} className="space-y-2">
+              activeConversation.messages.map((message, index) => (
+                <article
+                  key={message.id}
+                  ref={index === activeConversation.messages.length - 1 ? currentMessageRef : null}
+                  className="space-y-2"
+                >
                   <div className="ml-auto max-w-[54%] rounded-2xl bg-violet-500/90 px-3 py-2 text-sm text-white shadow-sm">
                     {message.user_input}
                   </div>
@@ -878,6 +892,7 @@ export default function ImageWorkbenchPage() {
                 输入需求开始创建图片对话任务。
               </div>
             )}
+            <div ref={conversationEndRef} />
           </div>
 
           <div className="mt-1.5 px-[7px] pb-[1px] pt-1.5 sm:px-[11px]">
@@ -910,51 +925,53 @@ export default function ImageWorkbenchPage() {
         </section>
 
         <aside className="order-3 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur">
-          <div className="flex items-center justify-between border-b border-slate-200/80 px-3 py-2 sm:px-4">
-            <span className="text-sm font-semibold text-slate-700">对话列表</span>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-100"
-              onClick={handleNewConversation}
-              aria-label="新建对话"
-            >
-              +新对话
-            </button>
-          </div>
-          <div className="flex-1 space-y-0 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
-            {conversations.map((conversation) => (
-              <div key={conversation.conversation_id} className="group relative mb-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveConversationId(conversation.conversation_id)}
-                  className={`w-full rounded-lg border px-2 py-1 text-left transition ${
-                    activeConversationId === conversation.conversation_id
-                      ? "border-violet-300 bg-violet-50/90 text-violet-800 shadow-[0_4px_12px_rgba(124,58,237,0.15)]"
-                      : "border-slate-200/90 bg-white/80 text-slate-700 hover:bg-slate-100/70"
-                  }`}
-                >
-                  <div className="truncate pr-5 text-sm font-medium leading-5">{conversation.title}</div>
-                  <div
-                    className={`mt-0.5 truncate text-[10px] ${
-                      activeConversationId === conversation.conversation_id ? "text-violet-400/90" : "text-slate-400/80"
+          <div className="flex h-full min-h-0 flex-col divide-y divide-slate-200/80">
+            <div className="flex items-center justify-between px-3 py-2.5 sm:px-4">
+              <span className="text-sm font-semibold text-slate-700">对话列表</span>
+              <button
+                type="button"
+                className="inline-flex items-center justify-center rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-100"
+                onClick={handleNewConversation}
+                aria-label="新建对话"
+              >
+                +新对话
+              </button>
+            </div>
+            <div className="flex-1 space-y-0 overflow-y-auto px-3 py-3 sm:px-4">
+              {conversations.map((conversation) => (
+                <div key={conversation.conversation_id} className="group relative mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveConversationId(conversation.conversation_id)}
+                    className={`w-full rounded-lg border px-2 py-1 text-left transition ${
+                      activeConversationId === conversation.conversation_id
+                        ? "border-violet-300 bg-violet-50/90 text-violet-800 shadow-[0_4px_12px_rgba(124,58,237,0.15)]"
+                        : "border-slate-200/90 bg-white/80 text-slate-700 hover:bg-slate-100/70"
                     }`}
                   >
-                    {new Date(conversation.updated_at).toLocaleString()}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleDeleteConversation(conversation.conversation_id);
-                  }}
-                  className="absolute right-1.5 top-1.5 hidden h-5 w-5 items-center justify-center rounded-md border border-slate-200 bg-white/95 text-[11px] text-slate-500 shadow-sm transition hover:border-rose-200 hover:text-rose-600 group-hover:inline-flex"
-                  aria-label="删除对话"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+                    <div className="truncate pr-5 text-sm font-medium leading-5">{conversation.title}</div>
+                    <div
+                      className={`mt-0.5 truncate text-[10px] ${
+                        activeConversationId === conversation.conversation_id ? "text-violet-400/90" : "text-slate-400/80"
+                      }`}
+                    >
+                      {new Date(conversation.updated_at).toLocaleString()}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleDeleteConversation(conversation.conversation_id);
+                    }}
+                    className="absolute right-1.5 top-1.5 hidden h-5 w-5 items-center justify-center rounded-md border border-slate-200 bg-white/95 text-[11px] text-slate-500 shadow-sm transition hover:border-rose-200 hover:text-rose-600 group-hover:inline-flex"
+                    aria-label="删除对话"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </aside>
       </div>

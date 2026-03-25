@@ -62,6 +62,23 @@ const isNetworkError = (error: unknown): boolean => {
   );
 };
 
+const isProviderGenerationError = (error: unknown): boolean => {
+  const text = extractErrorText(error);
+  if (!text) return false;
+  return (
+    text.includes("provider=google_image") ||
+    text.includes("stage=generate") ||
+    text.includes("objectdereferencederror") ||
+    text.includes("no image data returned")
+  );
+};
+
+const isOptimizerError = (error: unknown): boolean => {
+  const text = extractErrorText(error);
+  if (!text) return false;
+  return text.includes("stage=optimize_prompt") || text.includes("prompt_optimizer") || text.includes("optimize");
+};
+
 export const getFriendlyErrorMessage = (scene: ErrorScene, error?: unknown): string => {
   if (error) {
     console.error(`[${scene}]`, error);
@@ -69,6 +86,14 @@ export const getFriendlyErrorMessage = (scene: ErrorScene, error?: unknown): str
 
   if (error && isNetworkError(error)) {
     return ERROR_MESSAGE_MAP.network_error;
+  }
+
+  if (error && scene === "generation_failed" && isProviderGenerationError(error)) {
+    return ERROR_MESSAGE_MAP.generation_failed;
+  }
+
+  if (error && scene === "optimize_failed" && isOptimizerError(error)) {
+    return ERROR_MESSAGE_MAP.optimize_failed;
   }
 
   return ERROR_MESSAGE_MAP[scene];

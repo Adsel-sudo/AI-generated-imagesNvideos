@@ -25,6 +25,13 @@ except Exception:  # noqa: BLE001
 logger = logging.getLogger(__name__)
 
 
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    try:
+        return getattr(obj, attr, default)
+    except Exception:  # noqa: BLE001
+        return default
+
+
 class GoogleImageProvider(BaseProvider):
     """Google image generation provider using the official google-genai SDK."""
 
@@ -76,14 +83,14 @@ class GoogleImageProvider(BaseProvider):
         return genai_types.GenerateContentConfig()
 
     def _extract_response_parts(self, response: Any) -> list[Any]:
-        parts = getattr(response, "parts", None) or []
+        parts = _safe_getattr(response, "parts", None) or []
         if parts:
             return list(parts)
 
-        candidates = getattr(response, "candidates", None) or []
+        candidates = _safe_getattr(response, "candidates", None) or []
         for candidate in candidates:
-            content = getattr(candidate, "content", None)
-            candidate_parts = getattr(content, "parts", None) or []
+            content = _safe_getattr(candidate, "content", None)
+            candidate_parts = _safe_getattr(content, "parts", None) or []
             if candidate_parts:
                 return list(candidate_parts)
         return []
@@ -91,7 +98,7 @@ class GoogleImageProvider(BaseProvider):
     def _save_part_image(self, part: Any, file_path: Any) -> tuple[str, bool]:
         mime_type = "image/png"
 
-        as_image = getattr(part, "as_image", None)
+        as_image = _safe_getattr(part, "as_image", None)
         if callable(as_image):
             try:
                 image_obj = as_image()
@@ -105,12 +112,12 @@ class GoogleImageProvider(BaseProvider):
             except Exception:  # noqa: BLE001
                 pass
 
-        inline_data = getattr(part, "inline_data", None)
-        data = getattr(inline_data, "data", None)
+        inline_data = _safe_getattr(part, "inline_data", None)
+        data = _safe_getattr(inline_data, "data", None)
         if not data:
             return mime_type, False
 
-        mime_type = getattr(inline_data, "mime_type", None) or mime_type
+        mime_type = _safe_getattr(inline_data, "mime_type", None) or mime_type
 
         if isinstance(data, bytes):
             file_path.write_bytes(data)
@@ -153,7 +160,13 @@ class GoogleImageProvider(BaseProvider):
         output_dir = get_task_output_dir(task.id)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        parts = self._extract_response_parts(response)
+        try:
+            parts = self._extract_response_parts(response)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"[provider={self.name}][stage=parse_response][model={model_name}] "
+                f"failed to read response parts: {type(exc).__name__}"
+            ) from exc
 
         results: list[ProviderResultItem] = []
         for part in parts:

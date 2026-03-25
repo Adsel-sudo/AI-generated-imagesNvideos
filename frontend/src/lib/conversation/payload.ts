@@ -16,6 +16,18 @@ const mapReferencesToPayload = (draft: WorkbenchDraft): UploadedReferenceFile[] 
   ...mapReferenceItems(draft.references.style, "style"),
 ];
 
+const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/;
+
+export const resolveDraftSize = (draft: WorkbenchDraft): string => {
+  if (draft.sizeMode === "custom") {
+    if (POSITIVE_INTEGER_PATTERN.test(draft.customWidth) && POSITIVE_INTEGER_PATTERN.test(draft.customHeight)) {
+      return `${draft.customWidth}x${draft.customHeight}`;
+    }
+    return "";
+  }
+  return draft.presetSize;
+};
+
 const parseSizeToTarget = (size: string): GenerationTarget => {
   const matched = size.match(/^(\d+)x(\d+)$/i);
   const width = matched ? Number(matched[1]) : undefined;
@@ -31,7 +43,7 @@ const parseSizeToTarget = (size: string): GenerationTarget => {
 };
 
 const buildUsageOptions = (draft: WorkbenchDraft) => ({
-  size: draft.size,
+  size: resolveDraftSize(draft),
   style_preference: draft.style_preference,
   preserve_product_fidelity: draft.preserve_product_fidelity,
   implicit_prompt_plan: draft.reserved.implicit_prompt_plan,
@@ -46,7 +58,7 @@ export const buildOptimizePayload = ({ draft }: BuildPayloadParams): OptimizeReq
   raw_request: draft.raw_request,
   references: mapReferencesToPayload(draft),
   usage_options: buildUsageOptions(draft),
-  generation_targets: [parseSizeToTarget(draft.size)],
+  generation_targets: [parseSizeToTarget(resolveDraftSize(draft))],
 });
 
 export const buildGeneratePayload = ({
@@ -64,6 +76,6 @@ export const buildGeneratePayload = ({
   generation_prompt,
   structured_summary,
   references: mapReferencesToPayload(draft),
-  generation_targets: [parseSizeToTarget(draft.size)],
+  generation_targets: [parseSizeToTarget(resolveDraftSize(draft))],
   usage_options: buildUsageOptions(draft),
 });

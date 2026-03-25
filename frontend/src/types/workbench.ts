@@ -19,7 +19,10 @@ export type UploadedReferenceAsset = {
 export type WorkbenchDraft = {
   raw_request: string;
   references: ReferenceBuckets;
-  size: string;
+  sizeMode: "preset" | "custom";
+  presetSize: string;
+  customWidth: string;
+  customHeight: string;
   style_preference: string;
   preserve_product_fidelity: boolean;
   reserved: {
@@ -37,7 +40,10 @@ export const createEmptyWorkbenchDraft = (): WorkbenchDraft => ({
     pose: [],
     style: [],
   },
-  size: "1600x1600",
+  sizeMode: "preset",
+  presetSize: "1600x1600",
+  customWidth: "",
+  customHeight: "",
   style_preference: "",
   preserve_product_fidelity: false,
   reserved: {},
