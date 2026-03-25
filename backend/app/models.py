@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from sqlmodel import Field, SQLModel
 
+from .constants import DEFAULT_N_OUTPUTS
 from .enums import TaskStatus, TaskType
 
 
@@ -21,7 +22,7 @@ class Task(SQLModel, table=True):
     request_text: str
     prompt_final: Optional[str] = None
     model_name: Optional[str] = None
-    n_outputs: int = 1
+    n_outputs: int = Field(default=DEFAULT_N_OUTPUTS)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     started_at: Optional[datetime] = None

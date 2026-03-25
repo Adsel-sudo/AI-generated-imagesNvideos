@@ -202,75 +202,88 @@ class GoogleImageProvider(BaseProvider):
         if not model_name:
             raise ValueError(f"[provider={self.name}][stage=config] missing GOOGLE_IMAGE_MODEL")
 
-        logger.info("[provider=%s][stage=generate] model=%s", self.name, model_name)
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=[prompt_text],
-                config=config,
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(
-                f"[provider={self.name}][stage=generate][model={model_name}] "
-                f"[{type(exc).__name__}] {exc!r}"
-            ) from exc
-
         output_dir = get_task_output_dir(task.id)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        try:
-            parts = self._extract_response_parts(response)
-        except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(
-                f"[provider={self.name}][stage=parse_response][model={model_name}] "
-                f"failed to read response parts: {type(exc).__name__}"
-            ) from exc
-
         results: list[ProviderResultItem] = []
-        for part in parts:
+        max_attempts = max(1, task.n_outputs)
+        for attempt in range(max_attempts):
             if len(results) >= task.n_outputs:
                 break
 
-            index = len(results) + 1
-            inline_data = getattr(part, "inline_data", None)
-            initial_mime_type = getattr(inline_data, "mime_type", None) or "image/png"
-            ext = mimetypes.guess_extension(initial_mime_type) or ".png"
-
-            file_name = f"output_{index}{ext}"
-            file_path = output_dir / file_name
-
-            mime_type, saved = self._save_part_image(part, file_path)
-            if not saved:
-                continue
-
-            final_ext = mimetypes.guess_extension(mime_type) or ext or ".png"
-            if final_ext != file_path.suffix:
-                final_name = f"output_{index}{final_ext}"
-                final_path = output_dir / final_name
-                file_path.rename(final_path)
-                file_path = final_path
-                file_name = final_name
-
-            width = None
-            height = None
-            try:
-                with Image.open(file_path) as image:
-                    width, height = image.size
-            except Exception:  # noqa: BLE001
-                pass
-
-            results.append(
-                ProviderResultItem(
-                    index=index,
-                    file_path=str(file_path),
-                    mime_type=mime_type,
-                    file_type="image",
-                    file_name=file_name,
-                    file_size=file_path.stat().st_size,
-                    width=width,
-                    height=height,
-                )
+            logger.info(
+                "[provider=%s][stage=generate] model=%s attempt=%s/%s target_outputs=%s current_outputs=%s",
+                self.name,
+                model_name,
+                attempt + 1,
+                max_attempts,
+                task.n_outputs,
+                len(results),
             )
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[prompt_text],
+                    config=config,
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    f"[provider={self.name}][stage=generate][model={model_name}] "
+                    f"[{type(exc).__name__}] {exc!r}"
+                ) from exc
+
+            try:
+                parts = self._extract_response_parts(response)
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    f"[provider={self.name}][stage=parse_response][model={model_name}] "
+                    f"failed to read response parts: {type(exc).__name__}"
+                ) from exc
+
+            for part in parts:
+                if len(results) >= task.n_outputs:
+                    break
+
+                index = len(results) + 1
+                inline_data = getattr(part, "inline_data", None)
+                initial_mime_type = getattr(inline_data, "mime_type", None) or "image/png"
+                ext = mimetypes.guess_extension(initial_mime_type) or ".png"
+
+                file_name = f"output_{index}{ext}"
+                file_path = output_dir / file_name
+
+                mime_type, saved = self._save_part_image(part, file_path)
+                if not saved:
+                    continue
+
+                final_ext = mimetypes.guess_extension(mime_type) or ext or ".png"
+                if final_ext != file_path.suffix:
+                    final_name = f"output_{index}{final_ext}"
+                    final_path = output_dir / final_name
+                    file_path.rename(final_path)
+                    file_path = final_path
+                    file_name = final_name
+
+                width = None
+                height = None
+                try:
+                    with Image.open(file_path) as image:
+                        width, height = image.size
+                except Exception:  # noqa: BLE001
+                    pass
+
+                results.append(
+                    ProviderResultItem(
+                        index=index,
+                        file_path=str(file_path),
+                        mime_type=mime_type,
+                        file_type="image",
+                        file_name=file_name,
+                        file_size=file_path.stat().st_size,
+                        width=width,
+                        height=height,
+                    )
+                )
 
         if not results:
             raise RuntimeError(

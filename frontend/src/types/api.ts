@@ -25,11 +25,13 @@ export interface OutputItem {
 }
 
 export interface GenerationTarget {
+  target_type?: string;
+  aspect_ratio?: string;
   label?: string;
   width?: number;
   height?: number;
   size?: string;
-  count?: number;
+  n_outputs?: number;
   [key: string]: unknown;
 }
 
