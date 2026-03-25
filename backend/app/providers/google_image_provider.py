@@ -79,9 +79,21 @@ class GoogleImageProvider(BaseProvider):
                     continue
                 role = str(item.get("role") or "reference").strip().lower()
                 role_count[role] = role_count.get(role, 0) + 1
-            if role_count:
-                summary = ", ".join(f"{role}={count}" for role, count in sorted(role_count.items()))
-                lines.append(f"Reference alignment: {summary}")
+            if role_count.get("product"):
+                lines.append(
+                    f"Product references: {role_count['product']} image(s); keep subject identity and key details consistent."
+                )
+            if role_count.get("composition"):
+                lines.append(
+                    f"Composition references: {role_count['composition']} image(s); follow scene layout/background relations and only change user-requested parts."
+                )
+            if role_count.get("pose"):
+                lines.append(f"Pose references: {role_count['pose']} image(s); align subject pose.")
+            if role_count.get("style"):
+                lines.append(f"Style references: {role_count['style']} image(s); align color/light/material style.")
+            other_count = role_count.get("reference", 0)
+            if other_count:
+                lines.append(f"Other references: {other_count} image(s); keep semantic consistency.")
         lines.append("Prioritize matching requested size/aspect ratio while keeping main subject complete and sharp.")
         return "\n".join(line for line in lines if line)
 

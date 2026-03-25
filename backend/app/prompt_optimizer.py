@@ -15,6 +15,33 @@ SAFE_MODE_KEYWORDS = (
     "狗",
 )
 
+BACKGROUND_KEYWORDS = (
+    "背景",
+    "环境",
+    "天气",
+    "雨",
+    "雪",
+    "雾",
+    "场景",
+    "氛围",
+    "灯光",
+    "天空",
+    "室内",
+    "室外",
+)
+
+STYLE_KEYWORDS = (
+    "风格",
+    "色调",
+    "质感",
+    "胶片",
+    "插画",
+    "写实",
+    "赛博",
+    "复古",
+    "极简",
+)
+
 
 class PromptOptimizer:
     def optimize(
@@ -34,12 +61,16 @@ class PromptOptimizer:
         safe_mode = self._needs_safe_mode(cleaned_request, references, usage_options)
         style_preference = str(usage_options.get("style_preference") or "").strip()
         requested_size = str(usage_options.get("size") or "").strip()
+        reference_breakdown = self._build_reference_breakdown(references)
+        continuation_mode = reference_breakdown.get("composition", 0) > 0
 
         structured_summary = {
             "task_type": (task_type or "image").strip().lower(),
             "intent": cleaned_request,
             "safe_mode": safe_mode,
             "references": references,
+            "reference_breakdown": reference_breakdown,
+            "continuation_mode": continuation_mode,
             "usage_options": usage_options,
             "generation_targets": normalized_targets,
             "policy_notes": [
@@ -51,10 +82,24 @@ class PromptOptimizer:
         safety_line = "启用安全风格约束，避免不当内容表达。" if safe_mode else ""
         style_line = f"风格偏好：{style_preference}。" if style_preference else ""
         size_line = f"优先按尺寸 {requested_size} 进行构图与出图。" if requested_size else ""
+        reference_role_line = self._build_reference_role_line(reference_breakdown)
+        edit_plan = self._build_edit_plan(
+            cleaned_request=cleaned_request,
+            reference_breakdown=reference_breakdown,
+            style_preference=style_preference,
+            continuation_mode=continuation_mode,
+        )
+        continuation_line = (
+            "基于参考图所示主体与构图继续优化，仅修改用户本轮指定内容，未提及部分保持上一轮视觉结果一致。"
+            if continuation_mode
+            else ""
+        )
         optimized_prompt_cn = (
-            f"请根据以下需求生成高质量{'视频' if structured_summary['task_type'] == 'video' else '图片'}素材：{cleaned_request}。"
-            "场景需突出商品主体，保证主体清晰、细节完整、构图稳定，适合电商展示。"
-            "关键元素尽量落在安全区域，避免边缘裁切风险。"
+            f"请根据以下需求生成高质量{'视频' if structured_summary['task_type'] == 'video' else '图片'}素材。\n"
+            f"【本轮用户目标】{cleaned_request}\n"
+            f"{chr(10).join(edit_plan)}\n"
+            f"{reference_role_line}"
+            f"{continuation_line}"
             f"{style_line}"
             f"{size_line}"
             f"{safety_line}"
@@ -94,7 +139,7 @@ class PromptOptimizer:
         normalized = []
         for raw in generation_targets:
             target_type = str(raw.get("target_type") or "other").strip().lower()
-            if target_type not in {"pc", "mobile"}:
+            if target_type not in {"pc", "mobile", "image", "other"}:
                 target_type = "other"
             normalized.append(
                 {
@@ -120,15 +165,89 @@ class PromptOptimizer:
         if not references:
             return []
 
+        counts = self._build_reference_breakdown(references)
+        lines = ["参考约束："]
+        if counts.get("product", 0):
+            lines.append(f"- 商品图: {counts['product']} 张，用于主体保真与关键细节一致。")
+        if counts.get("composition", 0):
+            lines.append(f"- 元素/构图参考图: {counts['composition']} 张，用于场景、布局、背景关系参考。")
+            lines.append("- 基于参考图所示主体与构图继续优化，仅修改用户本轮指定内容。")
+        if counts.get("pose", 0):
+            lines.append(f"- 姿势参考图: {counts['pose']} 张，用于人物/主体姿态参考。")
+        if counts.get("style", 0):
+            lines.append(f"- 风格参考图: {counts['style']} 张，用于色调、质感、光影与风格参考。")
+        remaining = counts.get("reference", 0)
+        if remaining:
+            lines.append(f"- 其他参考: {remaining} 张，辅助保持语义一致性。")
+        return lines
+
+    def _build_edit_plan(
+        self,
+        *,
+        cleaned_request: str,
+        reference_breakdown: dict[str, int],
+        style_preference: str,
+        continuation_mode: bool,
+    ) -> list[str]:
+        lowered = cleaned_request.lower()
+        has_bg_edit = any(keyword in cleaned_request for keyword in BACKGROUND_KEYWORDS)
+        has_style_edit = bool(style_preference) or any(keyword in lowered for keyword in STYLE_KEYWORDS)
+        has_product_reference = reference_breakdown.get("product", 0) > 0
+        has_composition_reference = reference_breakdown.get("composition", 0) > 0
+
+        subject_keep_line = (
+            "【主体保持项】保持主体、主体位置、主体核心特征不变；构图重心与主体识别特征保持连续。"
+            if continuation_mode or has_product_reference
+            else "【主体保持项】主体清晰可辨，关键细节完整，不出现结构错位。"
+        )
+
+        product_lock_line = (
+            "【商品图约束】主体保真，避免改变结构、颜色、材质、logo与关键细节。"
+            if has_product_reference
+            else ""
+        )
+
+        background_line = (
+            f"【背景/环境修改项】按本轮要求修改背景/天气/环境：{cleaned_request}；未提及元素保持不变。"
+            if has_bg_edit
+            else "【背景/环境修改项】仅在不影响主体识别的前提下进行必要环境调整。"
+        )
+
+        style_line = (
+            f"【风格修改项】风格关键词：{style_preference or cleaned_request}；风格表达不得覆盖主体保真要求。"
+            if has_style_edit
+            else "【风格修改项】维持自然一致的视觉风格，不抢占主体表达。"
+        )
+
+        composition_line = (
+            "【构图参考项】参考元素/构图参考图中的布局、背景关系和画面组织方式。"
+            if has_composition_reference
+            else "【构图参考项】保持构图稳定，主体位于安全视觉区域。"
+        )
+
+        plan = [subject_keep_line, background_line, style_line, composition_line]
+        if product_lock_line:
+            plan.insert(1, product_lock_line)
+        return plan
+
+    def _build_reference_breakdown(self, references: list[dict[str, Any]]) -> dict[str, int]:
         counts: dict[str, int] = {}
         for item in references:
             role = str(item.get("role") or "reference").strip().lower()
             counts[role] = counts.get(role, 0) + 1
+        return counts
 
-        lines = ["参考约束："]
-        for role, count in sorted(counts.items()):
-            lines.append(f"- {role}: {count} 张，作为风格/构图/主体一致性参考")
-        return lines
+    def _build_reference_role_line(self, counts: dict[str, int]) -> str:
+        lines: list[str] = []
+        if counts.get("product", 0):
+            lines.append("商品图用于锁定主体形态与细节，不改变主体身份。")
+        if counts.get("composition", 0):
+            lines.append("元素/构图参考图用于约束场景布局、背景元素和空间关系。")
+        if counts.get("pose", 0):
+            lines.append("姿势参考图用于保持或迁移主体姿态。")
+        if counts.get("style", 0):
+            lines.append("风格参考图用于统一视觉风格、色彩与光影。")
+        return "".join(lines)
 
 
 prompt_optimizer = PromptOptimizer()

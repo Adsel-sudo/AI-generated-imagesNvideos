@@ -31,15 +31,24 @@ import {
 type SizeOption = "1:1" | "16:9" | "4:3" | "3:2" | "other";
 
 const PRESET_SIZES = ["1:1", "16:9", "4:3", "3:2"] as const;
-const REFERENCE_GROUPS: Array<{ label: string; key: ReferenceCategory }> = [
-  { label: "商品图", key: "product" },
-  { label: "元素/构图参考图", key: "composition" },
-  { label: "姿势参考图", key: "pose" },
-  { label: "风格参考图", key: "style" },
+const REFERENCE_LIMITS: Record<ReferenceCategory, number> = {
+  product: 3,
+  composition: 2,
+  pose: 2,
+  style: 2,
+};
+const TOTAL_REFERENCE_LIMIT = 8;
+const REFERENCE_GROUPS: Array<{ label: string; key: ReferenceCategory; limit: number }> = [
+  { label: "商品图", key: "product", limit: REFERENCE_LIMITS.product },
+  { label: "元素/构图参考图", key: "composition", limit: REFERENCE_LIMITS.composition },
+  { label: "姿势参考图", key: "pose", limit: REFERENCE_LIMITS.pose },
+  { label: "风格参考图", key: "style", limit: REFERENCE_LIMITS.style },
 ];
 const POLL_INTERVAL_MS = 2000;
 const POLL_MAX_ATTEMPTS = 30;
 const PANEL_SECTION_SPACING = "py-3";
+const OPTIONAL_BADGE_CLASS =
+  "inline-flex items-center rounded-full border border-violet-200/70 bg-violet-50/70 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-500";
 
 const getSizeDisplayText = (size: string) => {
   if (size === "1:1") return "方图（1:1）";
@@ -51,7 +60,30 @@ const getSizeDisplayText = (size: string) => {
 
 const TERMINAL_SUCCESS = new Set(["succeeded", "completed", "done"]);
 const TERMINAL_FAILED = new Set(["failed", "cancelled"]);
-const ASPECT_RATIO_PATTERN = /^\s*([1-9]\d*)\s*[:xX/]\s*([1-9]\d*)\s*$/;
+const ASPECT_RATIO_PATTERN = /^([1-9]\d*):([1-9]\d*)$/;
+
+const sanitizeAspectRatioInput = (value: string) => {
+  const normalized = value
+    .replace(/：/g, ":")
+    .replace(/\s+/g, "")
+    .replace(/[０-９]/g, (char) => String(char.charCodeAt(0) - 0xff10));
+
+  let result = "";
+  let hasColon = false;
+
+  for (const char of normalized) {
+    if (/\d/.test(char)) {
+      result += char;
+      continue;
+    }
+    if (char === ":" && !hasColon && result.length > 0) {
+      result += ":";
+      hasColon = true;
+    }
+  }
+
+  return result;
+};
 
 const sleep = (ms: number) =>
   new Promise((resolve) => {
@@ -122,6 +154,14 @@ export default function ImageWorkbenchPage() {
   });
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
   const currentMessageRef = useRef<HTMLElement | null>(null);
+  const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const totalReferenceCount = useMemo(
+    () =>
+      Object.values(draft.references).reduce((sum, assets) => {
+        return sum + assets.length;
+      }, 0),
+    [draft.references],
+  );
 
   const selectedSizeOption: SizeOption = useMemo(() => {
     if (draft.sizeMode === "custom") {
@@ -312,12 +352,34 @@ export default function ImageWorkbenchPage() {
   const handleUploadFiles = async (category: ReferenceCategory, files: FileList | null) => {
     if (!files?.length) return;
 
+    const categoryLimit = REFERENCE_LIMITS[category];
+    const currentCategoryCount = draft.references[category].length;
+    const categoryRemaining = Math.max(0, categoryLimit - currentCategoryCount);
+    const totalRemaining = Math.max(0, TOTAL_REFERENCE_LIMIT - totalReferenceCount);
+
+    if (categoryRemaining <= 0) {
+      setReferenceError(`「${REFERENCE_GROUPS.find((item) => item.key === category)?.label || "当前分组"}」最多上传 ${categoryLimit} 张`);
+      return;
+    }
+    if (totalRemaining <= 0) {
+      setReferenceError(`参考图片总数最多 ${TOTAL_REFERENCE_LIMIT} 张`);
+      return;
+    }
+
+    const allowedCount = Math.min(files.length, categoryRemaining, totalRemaining);
+    const selectedFiles = Array.from(files).slice(0, allowedCount);
+
+    if (allowedCount < files.length) {
+      setReferenceError(`已超出数量限制，本次仅上传前 ${allowedCount} 张`);
+    } else {
+      setReferenceError(null);
+    }
+
     setUploadingMap((prev) => ({ ...prev, [category]: true }));
-    setReferenceError(null);
 
     try {
       const uploadedAssets = await Promise.all(
-        Array.from(files).map(async (file) => {
+        selectedFiles.map(async (file) => {
           const uploaded = await uploadFile(file);
           return {
             local_id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
@@ -385,13 +447,15 @@ export default function ImageWorkbenchPage() {
     const previewUrl = output.url || output.downloadUrl || "";
 
     setReferenceError(null);
+    setOptimizeError(null);
+    setOptimizeLoading(false);
+    setIsSubmitting(false);
     setActiveDraft((prev) =>
       updatePreserveProductFidelity({
         ...prev,
         references: {
           ...prev.references,
-          product: [
-            ...prev.references.product,
+          composition: [
             {
               local_id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
               file_id: output.id,
@@ -400,10 +464,14 @@ export default function ImageWorkbenchPage() {
               mime_type: "image/png",
               preview_url: previewUrl,
             },
-          ],
+            ...prev.references.composition,
+          ].slice(0, REFERENCE_LIMITS.composition),
         },
       }),
     );
+    requestAnimationFrame(() => {
+      promptInputRef.current?.focus();
+    });
   };
 
   const updateMessageById = (
@@ -645,8 +713,11 @@ export default function ImageWorkbenchPage() {
           <div className="flex-1 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
             <div className="divide-y divide-slate-200/80">
               <div className={`${PANEL_SECTION_SPACING} pt-0`}>
-                <div className="mb-2 text-sm font-semibold text-slate-700">比例选择</div>
-                <div className="grid grid-cols-2 gap-1.5 text-sm text-slate-700">
+                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+                  <span>比例选择</span>
+                  <span className={OPTIONAL_BADGE_CLASS}>选填</span>
+                </div>
+                <div className="grid grid-cols-1 gap-1.5 text-sm text-slate-700">
                   {[
                     { label: "方图（1:1）", value: "1:1" as const },
                     { label: "横图（16:9）", value: "16:9" as const },
@@ -656,7 +727,7 @@ export default function ImageWorkbenchPage() {
                   ].map((option) => (
                     <label
                       key={option.value}
-                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100/70 px-2 py-1"
+                      className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-200 bg-slate-100/70 px-2.5 py-1.5"
                     >
                       <input
                         type="radio"
@@ -688,15 +759,18 @@ export default function ImageWorkbenchPage() {
                       className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
                       placeholder="请输入比例，例如 21:9"
                       value={draft.customAspectRatio}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const nextAspectRatio = sanitizeAspectRatioInput(e.target.value);
                         setActiveDraft((prev) => ({
                           ...prev,
                           sizeMode: "custom",
-                          customAspectRatio: e.target.value,
-                        }))
-                      }
+                          customAspectRatio: nextAspectRatio,
+                        }));
+                      }}
                     />
-                    {!customSizeReady ? <div className="text-xs text-amber-600">请输入有效比例（例如 21:9）</div> : null}
+                    {draft.customAspectRatio && !customSizeReady ? (
+                      <div className="text-xs text-amber-600">比例格式应为 正整数:正整数，例如 21:9</div>
+                    ) : null}
                   </div>
                 ) : null}
                 <div className="mt-2 text-xs text-slate-500">
@@ -705,7 +779,10 @@ export default function ImageWorkbenchPage() {
               </div>
 
               <div className={PANEL_SECTION_SPACING}>
-                <div className="mb-2 text-sm font-semibold text-slate-700">风格需求</div>
+                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+                  <span>风格需求</span>
+                  <span className={OPTIONAL_BADGE_CLASS}>选填</span>
+                </div>
                 <input
                   className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
                   placeholder="例：清爽、明亮、度假感、夏日氛围"
@@ -720,20 +797,28 @@ export default function ImageWorkbenchPage() {
               </div>
 
               <div className={`${PANEL_SECTION_SPACING} pb-0`}>
-                <div className="mb-2 text-sm font-semibold text-slate-700">参考图片</div>
+                <div className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+                  <span>参考图片</span>
+                  <span className={OPTIONAL_BADGE_CLASS}>选填</span>
+                </div>
+                <div className="mb-2.5 text-xs text-slate-500">
+                  总数最多 {TOTAL_REFERENCE_LIMIT} 张（当前 {totalReferenceCount}/{TOTAL_REFERENCE_LIMIT}）
+                </div>
                 {referenceError ? (
                   <div className="mb-2 rounded-xl border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-sm text-rose-600">
                     {referenceError}
                   </div>
                 ) : null}
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {REFERENCE_GROUPS.map((item) => {
                     const category = item.key;
                     return (
-                      <div key={item.key} className="space-y-1">
-                        <div className="text-xs font-medium text-slate-600">{item.label}</div>
+                      <div key={item.key} className="space-y-1.5 rounded-xl border border-slate-200/80 bg-slate-50/50 p-2">
+                        <div className="text-xs font-medium text-slate-700">
+                          {item.label}（最多{item.limit}张）
+                        </div>
                         <label
-                          className="block cursor-pointer rounded-xl border border-dashed border-slate-300 bg-white/80 px-2.5 py-[1.1rem] text-center text-xs text-slate-500 transition hover:border-violet-300 hover:text-violet-600"
+                          className="block cursor-pointer rounded-lg border border-dashed border-slate-300 bg-white px-2 py-2 text-center text-xs text-slate-500 transition hover:border-violet-300 hover:text-violet-600"
                           onDragOver={(event) => {
                             event.preventDefault();
                           }}
@@ -756,20 +841,20 @@ export default function ImageWorkbenchPage() {
                         </label>
 
                         {draft.references[category].length ? (
-                          <div className="flex flex-wrap gap-1">
+                          <div className="grid grid-cols-4 gap-1.5">
                             {draft.references[category].map((asset) => (
-                              <div key={asset.local_id} className="group relative">
+                              <div key={asset.local_id} className="group relative h-[68px] w-[68px]">
                                 <Image
                                   src={asset.preview_url}
                                   alt={asset.file_name || "参考图"}
-                                  width={84}
-                                  height={84}
-                                  className="h-16 w-16 rounded-lg border border-slate-200 object-cover"
+                                  width={68}
+                                  height={68}
+                                  className="h-[68px] w-[68px] rounded-md border border-slate-200 bg-white object-cover"
                                   unoptimized
                                 />
                                 <button
                                   type="button"
-                                  className="absolute -right-1 -top-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] text-white opacity-90 hover:bg-rose-600"
+                                  className="absolute right-0 top-0 inline-flex h-4 w-4 -translate-y-1/2 translate-x-1/2 items-center justify-center rounded-full bg-rose-500 text-[10px] text-white opacity-95 shadow-sm transition hover:bg-rose-600"
                                   onClick={() => handleRemoveReference(category, asset.local_id)}
                                   aria-label={`删除${item.label}`}
                                 >
@@ -846,36 +931,37 @@ export default function ImageWorkbenchPage() {
                           </span>
                           正在生成图片，请稍候…
                         </div>
-                        <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                          {[0, 1].map((placeholder) => (
+                        <div className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                          {[0, 1, 2].map((placeholder) => (
                             <div
                               key={placeholder}
                               className="animate-pulse rounded-lg border border-slate-200 bg-white p-1.5"
                             >
-                              <div className="aspect-[4/3] w-full rounded-md border border-dashed border-slate-200 bg-slate-100/80" />
+                              <div className="aspect-[4/3] w-full rounded-md border border-slate-200 bg-slate-100/80" />
                               <div className="mt-1.5 h-2.5 w-2/3 rounded bg-slate-100" />
                             </div>
                           ))}
                         </div>
                       </div>
                     ) : (
-                      <div className="grid gap-1.5 sm:grid-cols-2">
+                      <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                         {message.generated_outputs.map((output) => (
                           <div
                             key={output.id}
                             className="flex flex-col rounded-lg border border-slate-200 bg-white p-1.5"
                           >
-                            <div className="aspect-[4/3] w-full rounded-md border border-dashed border-slate-200 bg-slate-100/70" />
                             {output.url ? (
                               <Image
                                 src={output.url}
                                 alt="生成结果"
                                 width={768}
                                 height={576}
-                                className="mt-1.5 h-auto w-full rounded-md border border-slate-200 object-cover"
+                                className="h-auto w-full rounded-md border border-slate-200 object-cover"
                                 unoptimized
                               />
-                            ) : null}
+                            ) : (
+                              <div className="aspect-[4/3] w-full rounded-md border border-slate-200 bg-slate-100/70" />
+                            )}
                             <div className="mt-auto flex items-center justify-end gap-2 pt-1.5">
                               <button
                                 type="button"
@@ -916,6 +1002,7 @@ export default function ImageWorkbenchPage() {
           <div className="mt-1.5 px-[7px] pb-[1px] pt-1.5 sm:px-[11px]">
             <div className="relative">
               <textarea
+                ref={promptInputRef}
                 className="w-full resize-none rounded-2xl border border-slate-200 bg-white pl-3.5 pr-11 pt-2.5 pb-2.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 shadow-[inset_0_1px_2px_rgba(15,23,42,0.04)] focus:bg-white focus:ring-2 focus:ring-violet-200"
                 rows={2}
                 value={draft.raw_request}

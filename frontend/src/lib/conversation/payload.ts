@@ -3,6 +3,7 @@ import type { GenerationTarget } from "@/src/types/api";
 import type { UploadedReferenceAsset, WorkbenchDraft } from "@/src/types/workbench";
 
 const DEFAULT_TASK_TYPE = "image";
+const DEFAULT_N_OUTPUTS = 3;
 
 const mapReferenceItems = (items: UploadedReferenceAsset[], role: string): UploadedReferenceFile[] =>
   items
@@ -37,7 +38,7 @@ const parseSizeToTarget = (size: string): GenerationTarget => {
     target_type: "image",
     aspect_ratio,
     size,
-    n_outputs: 1,
+    n_outputs: DEFAULT_N_OUTPUTS,
   };
 };
 
