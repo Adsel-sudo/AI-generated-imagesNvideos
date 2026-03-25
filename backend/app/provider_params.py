@@ -33,9 +33,16 @@ def normalize_task_params(task: Task) -> StandardTaskParams:
         return StandardTaskParams()
 
     base: dict[str, Any] = {k: raw.get(k) for k in STANDARD_PARAM_KEYS if k in raw and k != "extra"}
+    usage_options = raw.get("usage_options") if isinstance(raw.get("usage_options"), dict) else {}
+    if base.get("size") is None and isinstance(usage_options.get("size"), str):
+        base["size"] = usage_options.get("size")
+    if base.get("style") is None and isinstance(usage_options.get("style_preference"), str):
+        base["style"] = usage_options.get("style_preference")
 
     # Allow width/height derived from `size` forms like "1024x1024".
     size = raw.get("size")
+    if not isinstance(size, str):
+        size = base.get("size")
     if isinstance(size, str) and "x" in size and (base.get("width") is None or base.get("height") is None):
         left, _, right = size.lower().partition("x")
         try:

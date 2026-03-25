@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import math
 import logging
 import mimetypes
 import re
@@ -49,11 +50,39 @@ class GoogleImageProvider(BaseProvider):
 
     def _build_prompt(self, task: Task) -> str:
         params = normalize_task_params(task)
-        lines = [task.request_text.strip()]
+        params_extra = params.extra if isinstance(params.extra, dict) else {}
+        current_target = params_extra.get("current_target") if isinstance(params_extra.get("current_target"), dict) else {}
+        references = params_extra.get("references") if isinstance(params_extra.get("references"), list) else []
+
+        primary_text = (task.prompt_final or task.request_text or "").strip()
+        lines = [primary_text] if primary_text else []
+
+        target_width = current_target.get("width") or params.width
+        target_height = current_target.get("height") or params.height
+        target_aspect_ratio = current_target.get("aspect_ratio") or params.aspect_ratio
+
+        if target_width and target_height:
+            lines.append(f"Target resolution preference: {target_width}x{target_height}px")
+        elif params.size:
+            lines.append(f"Target resolution preference: {params.size}")
+
+        if target_aspect_ratio:
+            lines.append(f"Target aspect ratio: {target_aspect_ratio}")
         if params.style:
             lines.append(f"Style: {params.style}")
         if params.negative_prompt:
             lines.append(f"Avoid: {params.negative_prompt}")
+        if references:
+            role_count: dict[str, int] = {}
+            for item in references:
+                if not isinstance(item, dict):
+                    continue
+                role = str(item.get("role") or "reference").strip().lower()
+                role_count[role] = role_count.get(role, 0) + 1
+            if role_count:
+                summary = ", ".join(f"{role}={count}" for role, count in sorted(role_count.items()))
+                lines.append(f"Reference alignment: {summary}")
+        lines.append("Prioritize matching requested size/aspect ratio while keeping main subject complete and sharp.")
         return "\n".join(line for line in lines if line)
 
     def _normalize_aspect_ratio(self, raw: str | None) -> str | None:
@@ -63,6 +92,17 @@ class GoogleImageProvider(BaseProvider):
         if re.fullmatch(r"\d+\s*:\s*\d+", value):
             left, _, right = value.partition(":")
             return f"{left.strip()}:{right.strip()}"
+        if re.fullmatch(r"\d+\s*x\s*\d+", value):
+            left, _, right = value.partition("x")
+            try:
+                width = int(left.strip())
+                height = int(right.strip())
+            except ValueError:
+                return None
+            if width <= 0 or height <= 0:
+                return None
+            ratio_gcd = math.gcd(width, height)
+            return f"{width // ratio_gcd}:{height // ratio_gcd}"
         return None
 
     def _build_config(self, task: Task) -> Any:
@@ -72,7 +112,13 @@ class GoogleImageProvider(BaseProvider):
         params = normalize_task_params(task)
         current_target = params.extra.get("current_target") if isinstance(params.extra, dict) else None
         target_aspect_ratio = current_target.get("aspect_ratio") if isinstance(current_target, dict) else None
+        target_width = current_target.get("width") if isinstance(current_target, dict) else None
+        target_height = current_target.get("height") if isinstance(current_target, dict) else None
         aspect_ratio = self._normalize_aspect_ratio(target_aspect_ratio or params.aspect_ratio)
+        if not aspect_ratio and isinstance(target_width, int) and isinstance(target_height, int) and target_width > 0 and target_height > 0:
+            aspect_ratio = self._normalize_aspect_ratio(f"{target_width}x{target_height}")
+        if not aspect_ratio and isinstance(params.width, int) and isinstance(params.height, int) and params.width > 0 and params.height > 0:
+            aspect_ratio = self._normalize_aspect_ratio(f"{params.width}x{params.height}")
         if not aspect_ratio:
             aspect_ratio = self._normalize_aspect_ratio(params.size)
 

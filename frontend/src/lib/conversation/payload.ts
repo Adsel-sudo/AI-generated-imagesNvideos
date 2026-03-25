@@ -32,9 +32,11 @@ const parseSizeToTarget = (size: string): GenerationTarget => {
   const matched = size.match(/^(\d+)x(\d+)$/i);
   const width = matched ? Number(matched[1]) : undefined;
   const height = matched ? Number(matched[2]) : undefined;
+  const aspect_ratio = width && height ? `${width}:${height}` : undefined;
 
   return {
     target_type: "image",
+    aspect_ratio,
     width,
     height,
     size,
