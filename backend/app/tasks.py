@@ -1,18 +1,31 @@
 import json
 import logging
-from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any
 
 from sqlmodel import Session, select
 
 from .celery_app import celery_app
+from .config import settings
 from .db import engine
 from .enums import TaskStatus, TaskType
 from .models import Output, Task, utcnow
-from .config import settings
 from .providers.router import get_provider
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class ProviderTaskInput:
+    id: str
+    type: str | None
+    provider: str | None
+    request_text: str
+    prompt_final: str | None
+    params_json: str | None
+    n_outputs: int
+    model_name: str | None
+
 
 
 def _update_task_status(
@@ -35,7 +48,8 @@ def _update_task_status(
     session.add(task)
 
 
-def _load_params_json(task: Task) -> dict[str, Any]:
+
+def _load_params_json(task: Task | ProviderTaskInput) -> dict[str, Any]:
     if not task.params_json:
         return {}
     try:
@@ -47,19 +61,33 @@ def _load_params_json(task: Task) -> dict[str, Any]:
     return {}
 
 
-def _build_target_tasks(task: Task) -> list[tuple[str | None, Task]]:
+
+def _make_provider_task_input(task: Task, *, params_json: str | None = None, n_outputs: int | None = None) -> ProviderTaskInput:
+    return ProviderTaskInput(
+        id=str(task.id),
+        type=task.type,
+        provider=task.provider,
+        request_text=task.request_text,
+        prompt_final=task.prompt_final,
+        params_json=params_json if params_json is not None else task.params_json,
+        n_outputs=n_outputs if n_outputs is not None else task.n_outputs,
+        model_name=task.model_name,
+    )
+
+
+
+def _build_target_tasks(task: Task) -> list[tuple[str | None, ProviderTaskInput]]:
     params = _load_params_json(task)
     targets = params.get("generation_targets") if isinstance(params.get("generation_targets"), list) else []
     if not targets:
-        return [(None, task)]
+        return [(None, _make_provider_task_input(task))]
 
-    derived: list[tuple[str | None, Task]] = []
+    derived: list[tuple[str | None, ProviderTaskInput]] = []
     for raw_target in targets:
         if not isinstance(raw_target, dict):
             continue
 
-        cloned = task.model_copy(deep=True)
-        task_params = deepcopy(params)
+        task_params = dict(params)
         task_params["current_target"] = raw_target
 
         for key in ("aspect_ratio", "width", "height"):
@@ -67,13 +95,18 @@ def _build_target_tasks(task: Task) -> list[tuple[str | None, Task]]:
                 task_params[key] = raw_target.get(key)
 
         per_target_n = raw_target.get("n_outputs")
+        target_n_outputs = task.n_outputs
         if isinstance(per_target_n, int) and per_target_n > 0:
-            cloned.n_outputs = per_target_n
+            target_n_outputs = per_target_n
 
-        cloned.params_json = json.dumps(task_params, ensure_ascii=False)
-        derived.append((str(raw_target.get("target_type") or "other"), cloned))
+        target_task = _make_provider_task_input(
+            task,
+            params_json=json.dumps(task_params, ensure_ascii=False),
+            n_outputs=target_n_outputs,
+        )
+        derived.append((str(raw_target.get("target_type") or "other"), target_task))
 
-    return derived or [(None, task)]
+    return derived or [(None, _make_provider_task_input(task))]
 
 
 @celery_app.task(name="generate_task")
