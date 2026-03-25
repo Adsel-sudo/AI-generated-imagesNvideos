@@ -48,7 +48,7 @@ const getSizeDisplayText = (size: string) => {
   return size.trim() || "（未填写）";
 };
 
-const TERMINAL_SUCCESS = new Set(["succeeded", "completed"]);
+const TERMINAL_SUCCESS = new Set(["succeeded", "completed", "done"]);
 const TERMINAL_FAILED = new Set(["failed", "cancelled"]);
 const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/;
 
@@ -140,6 +140,7 @@ export default function ImageWorkbenchPage() {
     () => conversations.find((item) => item.conversation_id === activeConversationId) ?? null,
     [activeConversationId, conversations],
   );
+  const hasMessages = Boolean(activeConversation?.messages.length);
   const activeConversationStatusSignature = useMemo(
     () =>
       activeConversation?.messages
@@ -803,9 +804,14 @@ export default function ImageWorkbenchPage() {
         </aside>
 
         <section className="order-1 flex h-[calc(100%-5px)] min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:order-2">
-          <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
-            {activeConversation?.messages.length ? (
-              activeConversation.messages.map((message, index) => (
+          <div
+            className={`min-h-0 flex-1 px-3 pt-5 pb-2 sm:px-4 ${
+              hasMessages ? "overflow-y-auto" : "overflow-y-hidden"
+            }`}
+          >
+            {hasMessages ? (
+              <div className="space-y-2.5 pb-1">
+                {activeConversation?.messages.map((message, index) => (
                 <article
                   key={message.id}
                   ref={index === activeConversation.messages.length - 1 ? currentMessageRef : null}
@@ -815,23 +821,27 @@ export default function ImageWorkbenchPage() {
                     {message.user_input}
                   </div>
 
-                  <div className="max-w-[78%] space-y-1.5 rounded-2xl border border-slate-200 bg-slate-100/60 p-2">
+                  <div className="max-w-[78%] space-y-2">
                     {message.system_status === "error" && message.error_message ? (
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="rounded-xl border border-rose-200 bg-rose-50/70 px-2.5 py-2">
                         <div className="truncate text-xs text-rose-600">{message.error_message}</div>
-                        <span className="inline-flex shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 ring-1 ring-rose-200">
-                          失败
-                        </span>
                       </div>
                     ) : (
                       <div className="flex items-center justify-between gap-2">
-                        <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${getMessageStatusBadge(
-                            message.system_status,
-                          )}`}
-                        >
-                          {message.system_status === "done" ? "生成完成" : "生成中"}
-                        </span>
+                        <div className="inline-flex items-center gap-1.5">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${getMessageStatusBadge(
+                              message.system_status,
+                            )}`}
+                          >
+                            {message.system_status === "done" ? "生成完成" : "生成中"}
+                          </span>
+                          {message.system_status === "processing" ? (
+                            <span className="inline-flex h-4 w-4 items-center justify-center text-slate-400">
+                              <LoadingIcon />
+                            </span>
+                          ) : null}
+                        </div>
                         {message.optimized_prompt ? (
                           <details className="max-w-[72%] rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-right">
                             <summary className="cursor-pointer text-xs font-medium text-slate-600">
@@ -843,52 +853,75 @@ export default function ImageWorkbenchPage() {
                       </div>
                     )}
 
-                    <div className="grid gap-1.5 sm:grid-cols-2">
-                      {message.generated_outputs.map((output) => (
-                        <div
-                          key={output.id}
-                          className="flex flex-col rounded-lg border border-slate-200 bg-white p-1.5"
-                        >
-                          <div className="aspect-[4/3] w-full rounded-md border border-dashed border-slate-200 bg-slate-100/70" />
-                          {output.url ? (
-                            <Image
-                              src={output.url}
-                              alt="生成结果"
-                              width={768}
-                              height={576}
-                              className="mt-1.5 h-auto w-full rounded-md border border-slate-200 object-cover"
-                              unoptimized
-                            />
-                          ) : null}
-                          <div className="mt-auto flex items-center justify-end gap-2 pt-1.5">
-                            <button
-                              type="button"
-                              disabled={!output.file_path}
-                              onClick={() => handleModifyGeneratedImage(output)}
-                              className="text-xs font-medium text-slate-600 hover:text-slate-800 disabled:cursor-not-allowed disabled:text-slate-400"
-                            >
-                              修改此图
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!output.downloadUrl}
-                              onClick={() => {
-                                if (!output.downloadUrl) return;
-                                window.open(output.downloadUrl, "_blank", "noopener,noreferrer");
-                              }}
-                              className="text-xs font-medium text-violet-600 hover:text-violet-700 disabled:cursor-not-allowed disabled:text-slate-400"
-                            >
-                              下载图片
-                            </button>
-                          </div>
+                    {message.system_status === "processing" && message.generated_outputs.length === 0 ? (
+                      <div className="rounded-xl border border-slate-200/80 bg-white/75 p-2">
+                        <div className="flex items-center gap-2 text-xs text-slate-500">
+                          <span className="inline-flex h-4 w-4 items-center justify-center text-slate-400">
+                            <LoadingIcon />
+                          </span>
+                          正在生成图片，请稍候…
                         </div>
-                      ))}
-                    </div>
+                        <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                          {[0, 1].map((placeholder) => (
+                            <div
+                              key={placeholder}
+                              className="animate-pulse rounded-lg border border-slate-200 bg-white p-1.5"
+                            >
+                              <div className="aspect-[4/3] w-full rounded-md border border-dashed border-slate-200 bg-slate-100/80" />
+                              <div className="mt-1.5 h-2.5 w-2/3 rounded bg-slate-100" />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid gap-1.5 sm:grid-cols-2">
+                        {message.generated_outputs.map((output) => (
+                          <div
+                            key={output.id}
+                            className="flex flex-col rounded-lg border border-slate-200 bg-white p-1.5"
+                          >
+                            <div className="aspect-[4/3] w-full rounded-md border border-dashed border-slate-200 bg-slate-100/70" />
+                            {output.url ? (
+                              <Image
+                                src={output.url}
+                                alt="生成结果"
+                                width={768}
+                                height={576}
+                                className="mt-1.5 h-auto w-full rounded-md border border-slate-200 object-cover"
+                                unoptimized
+                              />
+                            ) : null}
+                            <div className="mt-auto flex items-center justify-end gap-2 pt-1.5">
+                              <button
+                                type="button"
+                                disabled={!output.file_path}
+                                onClick={() => handleModifyGeneratedImage(output)}
+                                className="text-xs font-medium text-slate-600 hover:text-slate-800 disabled:cursor-not-allowed disabled:text-slate-400"
+                              >
+                                修改此图
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!output.downloadUrl}
+                                onClick={() => {
+                                  if (!output.downloadUrl) return;
+                                  window.open(output.downloadUrl, "_blank", "noopener,noreferrer");
+                                }}
+                                className="text-xs font-medium text-violet-600 hover:text-violet-700 disabled:cursor-not-allowed disabled:text-slate-400"
+                              >
+                                下载图片
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </article>
-              ))
+                ))}
+              </div>
             ) : (
-              <div className="flex h-full min-h-[200px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-100/70 text-sm text-slate-500">
+              <div className="flex min-h-[220px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-100/70 px-4 text-sm text-slate-500">
                 输入需求开始创建图片对话任务。
               </div>
             )}
@@ -937,9 +970,9 @@ export default function ImageWorkbenchPage() {
                 +新对话
               </button>
             </div>
-            <div className="flex-1 space-y-0 overflow-y-auto px-3 py-3 sm:px-4">
+            <div className="flex flex-1 flex-col gap-2.5 overflow-y-auto px-3 py-2.5 sm:px-4">
               {conversations.map((conversation) => (
-                <div key={conversation.conversation_id} className="group relative mb-[10px]">
+                <div key={conversation.conversation_id} className="group relative">
                   <button
                     type="button"
                     onClick={() => setActiveConversationId(conversation.conversation_id)}

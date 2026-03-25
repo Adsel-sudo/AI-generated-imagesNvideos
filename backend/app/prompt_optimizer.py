@@ -32,6 +32,8 @@ class PromptOptimizer:
 
         normalized_targets = self._normalize_targets(generation_targets)
         safe_mode = self._needs_safe_mode(cleaned_request, references, usage_options)
+        style_preference = str(usage_options.get("style_preference") or "").strip()
+        requested_size = str(usage_options.get("size") or "").strip()
 
         structured_summary = {
             "task_type": (task_type or "image").strip().lower(),
@@ -47,10 +49,14 @@ class PromptOptimizer:
         }
 
         safety_line = "启用安全风格约束，避免不当内容表达。" if safe_mode else ""
+        style_line = f"风格偏好：{style_preference}。" if style_preference else ""
+        size_line = f"优先按尺寸 {requested_size} 进行构图与出图。" if requested_size else ""
         optimized_prompt_cn = (
             f"请根据以下需求生成高质量{'视频' if structured_summary['task_type'] == 'video' else '图片'}素材：{cleaned_request}。"
             "场景需突出商品主体，保证主体清晰、细节完整、构图稳定，适合电商展示。"
             "关键元素尽量落在安全区域，避免边缘裁切风险。"
+            f"{style_line}"
+            f"{size_line}"
             f"{safety_line}"
         ).strip()
 
@@ -58,12 +64,16 @@ class PromptOptimizer:
         for target in normalized_targets:
             dimension = target.get("aspect_ratio") or f"{target.get('width') or '?'}x{target.get('height') or '?'}"
             target_lines.append(f"- {target['target_type']}：{dimension}，生成 {target['n_outputs']} 张")
+        reference_lines = self._summarize_references(references)
+        reference_section = f"{chr(10).join(reference_lines)}{chr(10)}" if reference_lines else ""
 
         generation_prompt = (
             f"{optimized_prompt_cn}\n"
             "输出要求：\n"
             f"{chr(10).join(target_lines)}\n"
+            f"{reference_section}"
             "请确保每个端侧目标独立生成，不共享裁切版本。"
+            "当模型无法严格锁定像素尺寸时，至少保持目标宽高比与构图安全边界一致。"
         ).strip()
 
         normalized_params = {
@@ -105,6 +115,20 @@ class PromptOptimizer:
         bag = [raw_request.lower(), str(usage_options).lower(), str(references).lower()]
         combined = "\n".join(bag)
         return any(keyword in combined for keyword in SAFE_MODE_KEYWORDS)
+
+    def _summarize_references(self, references: list[dict[str, Any]]) -> list[str]:
+        if not references:
+            return []
+
+        counts: dict[str, int] = {}
+        for item in references:
+            role = str(item.get("role") or "reference").strip().lower()
+            counts[role] = counts.get(role, 0) + 1
+
+        lines = ["参考约束："]
+        for role, count in sorted(counts.items()):
+            lines.append(f"- {role}: {count} 张，作为风格/构图/主体一致性参考")
+        return lines
 
 
 prompt_optimizer = PromptOptimizer()

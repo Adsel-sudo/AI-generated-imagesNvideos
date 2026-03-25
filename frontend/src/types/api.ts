@@ -5,6 +5,7 @@ export type TaskStatus =
   | "running"
   | "succeeded"
   | "completed"
+  | "done"
   | "failed"
   | "cancelled"
   | string;
