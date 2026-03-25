@@ -16,12 +16,13 @@ const mapReferencesToPayload = (draft: WorkbenchDraft): UploadedReferenceFile[] 
   ...mapReferenceItems(draft.references.style, "style"),
 ];
 
-const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/;
+const ASPECT_RATIO_PATTERN = /^\s*([1-9]\d*)\s*[:xX/]\s*([1-9]\d*)\s*$/;
 
 export const resolveDraftSize = (draft: WorkbenchDraft): string => {
   if (draft.sizeMode === "custom") {
-    if (POSITIVE_INTEGER_PATTERN.test(draft.customWidth) && POSITIVE_INTEGER_PATTERN.test(draft.customHeight)) {
-      return `${draft.customWidth}x${draft.customHeight}`;
+    const matched = draft.customAspectRatio.match(ASPECT_RATIO_PATTERN);
+    if (matched) {
+      return `${matched[1]}:${matched[2]}`;
     }
     return "";
   }
@@ -29,16 +30,12 @@ export const resolveDraftSize = (draft: WorkbenchDraft): string => {
 };
 
 const parseSizeToTarget = (size: string): GenerationTarget => {
-  const matched = size.match(/^(\d+)x(\d+)$/i);
-  const width = matched ? Number(matched[1]) : undefined;
-  const height = matched ? Number(matched[2]) : undefined;
-  const aspect_ratio = width && height ? `${width}:${height}` : undefined;
+  const matched = size.match(ASPECT_RATIO_PATTERN);
+  const aspect_ratio = matched ? `${matched[1]}:${matched[2]}` : undefined;
 
   return {
     target_type: "image",
     aspect_ratio,
-    width,
-    height,
     size,
     n_outputs: 1,
   };

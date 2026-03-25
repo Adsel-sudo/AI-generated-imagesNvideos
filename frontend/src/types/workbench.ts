@@ -21,8 +21,7 @@ export type WorkbenchDraft = {
   references: ReferenceBuckets;
   sizeMode: "preset" | "custom";
   presetSize: string;
-  customWidth: string;
-  customHeight: string;
+  customAspectRatio: string;
   style_preference: string;
   preserve_product_fidelity: boolean;
   reserved: {
@@ -41,9 +40,8 @@ export const createEmptyWorkbenchDraft = (): WorkbenchDraft => ({
     style: [],
   },
   sizeMode: "preset",
-  presetSize: "1600x1600",
-  customWidth: "",
-  customHeight: "",
+  presetSize: "1:1",
+  customAspectRatio: "",
   style_preference: "",
   preserve_product_fidelity: false,
   reserved: {},

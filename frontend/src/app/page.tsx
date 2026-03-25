@@ -28,9 +28,9 @@ import {
   type WorkbenchDraft,
 } from "@/src/types/workbench";
 
-type SizeOption = "1600x1600" | "1464x600" | "600x450" | "other";
+type SizeOption = "1:1" | "16:9" | "4:3" | "3:2" | "other";
 
-const PRESET_SIZES = ["1600x1600", "1464x600", "600x450"] as const;
+const PRESET_SIZES = ["1:1", "16:9", "4:3", "3:2"] as const;
 const REFERENCE_GROUPS: Array<{ label: string; key: ReferenceCategory }> = [
   { label: "商品图", key: "product" },
   { label: "元素/构图参考图", key: "composition" },
@@ -42,15 +42,16 @@ const POLL_MAX_ATTEMPTS = 30;
 const PANEL_SECTION_SPACING = "py-3";
 
 const getSizeDisplayText = (size: string) => {
-  if (size === "1600x1600") return "1600 × 1600";
-  if (size === "1464x600") return "1464 × 600";
-  if (size === "600x450") return "600 × 450";
+  if (size === "1:1") return "方图（1:1）";
+  if (size === "16:9") return "横图（16:9）";
+  if (size === "4:3") return "标准横图（4:3）";
+  if (size === "3:2") return "横图（3:2）";
   return size.trim() || "（未填写）";
 };
 
 const TERMINAL_SUCCESS = new Set(["succeeded", "completed", "done"]);
 const TERMINAL_FAILED = new Set(["failed", "cancelled"]);
-const POSITIVE_INTEGER_PATTERN = /^[1-9]\d*$/;
+const ASPECT_RATIO_PATTERN = /^\s*([1-9]\d*)\s*[:xX/]\s*([1-9]\d*)\s*$/;
 
 const sleep = (ms: number) =>
   new Promise((resolve) => {
@@ -129,12 +130,10 @@ export default function ImageWorkbenchPage() {
     if (PRESET_SIZES.includes(draft.presetSize as (typeof PRESET_SIZES)[number])) {
       return draft.presetSize as SizeOption;
     }
-    return "1600x1600";
+    return "1:1";
   }, [draft.presetSize, draft.sizeMode]);
 
-  const customWidthValid = POSITIVE_INTEGER_PATTERN.test(draft.customWidth);
-  const customHeightValid = POSITIVE_INTEGER_PATTERN.test(draft.customHeight);
-  const customSizeReady = customWidthValid && customHeightValid;
+  const customSizeReady = ASPECT_RATIO_PATTERN.test(draft.customAspectRatio);
 
   const activeConversation = useMemo(
     () => conversations.find((item) => item.conversation_id === activeConversationId) ?? null,
@@ -646,12 +645,13 @@ export default function ImageWorkbenchPage() {
           <div className="flex-1 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">
             <div className="divide-y divide-slate-200/80">
               <div className={`${PANEL_SECTION_SPACING} pt-0`}>
-                <div className="mb-2 text-sm font-semibold text-slate-700">尺寸选择</div>
+                <div className="mb-2 text-sm font-semibold text-slate-700">比例选择</div>
                 <div className="grid grid-cols-2 gap-1.5 text-sm text-slate-700">
                   {[
-                    { label: "1600 × 1600", value: "1600x1600" as const },
-                    { label: "1464 × 600", value: "1464x600" as const },
-                    { label: "600 × 450", value: "600x450" as const },
+                    { label: "方图（1:1）", value: "1:1" as const },
+                    { label: "横图（16:9）", value: "16:9" as const },
+                    { label: "标准横图（4:3）", value: "4:3" as const },
+                    { label: "横图（3:2）", value: "3:2" as const },
                     { label: "其他", value: "other" as const },
                   ].map((option) => (
                     <label
@@ -684,39 +684,24 @@ export default function ImageWorkbenchPage() {
                 </div>
                 {selectedSizeOption === "other" ? (
                   <div className="mt-1.5 space-y-1.5">
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <input
-                        className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
-                        placeholder="宽度"
-                        inputMode="numeric"
-                        value={draft.customWidth}
-                        onChange={(e) => {
-                          const value = e.target.value.replace(/[^\d]/g, "");
-                          setActiveDraft((prev) => ({
-                            ...prev,
-                            sizeMode: "custom",
-                            customWidth: value,
-                          }));
-                        }}
-                      />
-                      <input
-                        className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
-                        placeholder="高度"
-                        inputMode="numeric"
-                        value={draft.customHeight}
-                        onChange={(e) => {
-                          const value = e.target.value.replace(/[^\d]/g, "");
-                          setActiveDraft((prev) => ({
-                            ...prev,
-                            sizeMode: "custom",
-                            customHeight: value,
-                          }));
-                        }}
-                      />
-                    </div>
-                    {!customSizeReady ? <div className="text-xs text-amber-600">请输入有效的正整数宽高</div> : null}
+                    <input
+                      className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-slate-200 placeholder:text-slate-400 focus:ring-2 focus:ring-violet-200"
+                      placeholder="请输入比例，例如 21:9"
+                      value={draft.customAspectRatio}
+                      onChange={(e) =>
+                        setActiveDraft((prev) => ({
+                          ...prev,
+                          sizeMode: "custom",
+                          customAspectRatio: e.target.value,
+                        }))
+                      }
+                    />
+                    {!customSizeReady ? <div className="text-xs text-amber-600">请输入有效比例（例如 21:9）</div> : null}
                   </div>
                 ) : null}
+                <div className="mt-2 text-xs text-slate-500">
+                  实际输出分辨率由模型决定，系统将尽量匹配所选比例
+                </div>
               </div>
 
               <div className={PANEL_SECTION_SPACING}>
