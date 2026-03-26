@@ -175,15 +175,15 @@ function LoadingIcon() {
 
 function getMessageStatusBadge(status: Conversation["messages"][number]["system_status"]) {
   if (status === "done") {
-    return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
+    return "bg-emerald-100/90 text-emerald-700";
   }
   if (status === "cancelled") {
-    return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
+    return "bg-slate-200/80 text-slate-700";
   }
   if (status === "error") {
-    return "bg-rose-50 text-rose-700 ring-1 ring-rose-200";
+    return "bg-rose-100/90 text-rose-700";
   }
-  return "bg-amber-50 text-amber-700 ring-1 ring-amber-200";
+  return "bg-amber-100/90 text-amber-700";
 }
 
 export default function ImageWorkbenchPage() {
@@ -1160,14 +1160,10 @@ export default function ImageWorkbenchPage() {
                               ? "生成完成"
                               : message.system_status === "cancelled"
                                 ? "已停止"
-                                : `生成中${
-                                  (message.progress_total || 0) > 0
-                                    ? `（${Math.max(0, message.progress_current || 0)}/${Math.max(
-                                        0,
-                                        message.progress_total || 0,
-                                      )}）`
-                                    : ""
-                                }`}
+                                : `生成中 ${Math.max(0, message.progress_current || 0)}/${Math.max(
+                                    0,
+                                    message.progress_total || 0,
+                                  )}`}
                           </span>
                           {message.system_status === "processing" ? (
                             <span className="inline-flex h-4 w-4 items-center justify-center text-slate-400">
