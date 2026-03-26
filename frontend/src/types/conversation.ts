@@ -1,6 +1,6 @@
 import type { WorkbenchDraft } from "@/src/types/workbench";
 
-export type SystemStatus = "processing" | "done" | "error";
+export type SystemStatus = "processing" | "done" | "error" | "cancelled";
 
 export type GeneratedOutput = {
   id: string;

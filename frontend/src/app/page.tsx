@@ -4,6 +4,7 @@ import { type SetStateAction, useCallback, useEffect, useMemo, useRef, useState 
 import Image from "next/image";
 import { getApiBaseUrl } from "@/src/lib/api/client";
 import {
+  cancelTask,
   generateImageTask,
   getOutputDownloadUrl,
   getTaskDetail,
@@ -62,7 +63,8 @@ const getSizeDisplayText = (size: string) => {
 };
 
 const TERMINAL_SUCCESS = new Set(["succeeded", "completed", "done"]);
-const TERMINAL_FAILED = new Set(["failed", "cancelled"]);
+const TERMINAL_FAILED = new Set(["failed"]);
+const TERMINAL_CANCELLED = new Set(["cancelled"]);
 const ASPECT_RATIO_PATTERN = /^([1-9]\d*):([1-9]\d*)$/;
 
 const sanitizeAspectRatioInput = (value: string) => {
@@ -174,6 +176,9 @@ function LoadingIcon() {
 function getMessageStatusBadge(status: Conversation["messages"][number]["system_status"]) {
   if (status === "done") {
     return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
+  }
+  if (status === "cancelled") {
+    return "bg-slate-100 text-slate-700 ring-1 ring-slate-200";
   }
   if (status === "error") {
     return "bg-rose-50 text-rose-700 ring-1 ring-rose-200";
@@ -669,7 +674,10 @@ export default function ImageWorkbenchPage() {
         const hasActivity =
           progressCurrent > lastProgressCurrent ||
           outputCount > lastOutputCount ||
-          (status !== lastStatus && !TERMINAL_SUCCESS.has(status) && !TERMINAL_FAILED.has(status));
+          (status !== lastStatus &&
+            !TERMINAL_SUCCESS.has(status) &&
+            !TERMINAL_FAILED.has(status) &&
+            !TERMINAL_CANCELLED.has(status));
 
         if (hasActivity) {
           lastActivityAt = Date.now();
@@ -679,7 +687,7 @@ export default function ImageWorkbenchPage() {
         lastOutputCount = Math.max(lastOutputCount, outputCount);
         lastStatus = status;
 
-        if (!TERMINAL_SUCCESS.has(status) && !TERMINAL_FAILED.has(status)) {
+        if (!TERMINAL_SUCCESS.has(status) && !TERMINAL_FAILED.has(status) && !TERMINAL_CANCELLED.has(status)) {
           const idleDuration = Date.now() - lastActivityAt;
           const isStalled = idleDuration >= POLL_STALL_THRESHOLD_MS;
           if (isStalled) {
@@ -713,6 +721,18 @@ export default function ImageWorkbenchPage() {
                   ...output,
                   status: "failed",
                 })),
+          }));
+          return;
+        }
+
+        if (TERMINAL_CANCELLED.has(status)) {
+          updateMessageById(conversationId, messageId, (message) => ({
+            ...message,
+            system_status: "cancelled",
+            progress_current: progressCurrent || message.progress_current,
+            progress_total: progressTotal || message.progress_total,
+            progress_message: progressMessage || "已停止",
+            generated_outputs: outputs.length ? outputs : message.generated_outputs,
           }));
           return;
         }
@@ -774,6 +794,29 @@ export default function ImageWorkbenchPage() {
       }
     }
   }, [conversations, startPollingTask]);
+
+  const handleCancelTask = useCallback(
+    async ({ conversationId, messageId, taskId }: { conversationId: string; messageId: string; taskId: string }) => {
+      try {
+        const task = await cancelTask(taskId);
+        const outputs = mapTaskOutputsToGeneratedOutputs(taskId, task.outputs);
+        updateMessageById(conversationId, messageId, (message) => ({
+          ...message,
+          system_status: "cancelled",
+          progress_current: task.progress_current ?? message.progress_current,
+          progress_total: task.progress_total ?? message.progress_total,
+          progress_message: task.progress_message || "已停止",
+          generated_outputs: outputs.length ? outputs : message.generated_outputs,
+        }));
+      } catch (error) {
+        updateMessageById(conversationId, messageId, (message) => ({
+          ...message,
+          error_message: getFriendlyErrorMessage("submit_failed", error),
+        }));
+      }
+    },
+    [updateMessageById],
+  );
 
   const handleSubmitTask = async () => {
     if (!draft.raw_request.trim()) {
@@ -1113,45 +1156,55 @@ export default function ImageWorkbenchPage() {
                               message.system_status,
                             )}`}
                           >
-                            {message.system_status === "done" ? "生成完成" : "生成中"}
+                            {message.system_status === "done"
+                              ? "生成完成"
+                              : message.system_status === "cancelled"
+                                ? "已停止"
+                                : `生成中${
+                                  (message.progress_total || 0) > 0
+                                    ? `（${Math.max(0, message.progress_current || 0)}/${Math.max(
+                                        0,
+                                        message.progress_total || 0,
+                                      )}）`
+                                    : ""
+                                }`}
                           </span>
-                          {message.system_status === "processing" && (message.progress_total || 0) > 0 ? (
-                            <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                              {`${Math.max(0, message.progress_current || 0)}/${Math.max(
-                                0,
-                                message.progress_total || 0,
-                              )}`}
-                            </span>
-                          ) : null}
                           {message.system_status === "processing" ? (
                             <span className="inline-flex h-4 w-4 items-center justify-center text-slate-400">
                               <LoadingIcon />
                             </span>
                           ) : null}
                         </div>
-                        {message.optimized_prompt ? (
-                          <details className="max-w-[72%] rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-right">
-                            <summary className="cursor-pointer text-xs font-medium text-slate-600">
-                              查看优化后的提示词
-                            </summary>
-                            <div className="mt-1 text-left text-xs text-slate-500">{message.optimized_prompt}</div>
-                          </details>
-                        ) : null}
+                        <div className="flex items-center gap-2">
+                          {message.system_status === "processing" && message.task_id ? (
+                            <button
+                              type="button"
+                              className="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-600 transition hover:bg-rose-100"
+                              onClick={() =>
+                                handleCancelTask({
+                                  conversationId: activeConversationId,
+                                  messageId: message.id,
+                                  taskId: message.task_id!,
+                                })
+                              }
+                            >
+                              停止生成
+                            </button>
+                          ) : null}
+                          {message.optimized_prompt ? (
+                            <details className="max-w-[72%] rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-right">
+                              <summary className="cursor-pointer text-xs font-medium text-slate-600">
+                                查看优化后的提示词
+                              </summary>
+                              <div className="mt-1 text-left text-xs text-slate-500">{message.optimized_prompt}</div>
+                            </details>
+                          ) : null}
+                        </div>
                       </div>
                     )}
-                    {message.system_status === "processing" && message.progress_message ? (
-                      <div className="text-xs text-slate-500">{message.progress_message}</div>
-                    ) : null}
-
                     {message.system_status === "processing" && message.generated_outputs.length === 0 ? (
                       <div className="rounded-xl border border-slate-200/80 bg-white/75 p-2">
-                        <div className="flex items-center gap-2 text-xs text-slate-500">
-                          <span className="inline-flex h-4 w-4 items-center justify-center text-slate-400">
-                            <LoadingIcon />
-                          </span>
-                          正在生成图片，请稍候…
-                        </div>
-                        <div className="mt-2 grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                           {[0, 1, 2].map((placeholder) => (
                             <div
                               key={placeholder}

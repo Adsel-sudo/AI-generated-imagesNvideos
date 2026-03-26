@@ -5,13 +5,17 @@ import logging
 import math
 import mimetypes
 import re
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageFilter, ImageStat
+from sqlmodel import Session, select
 
 from ..config import settings
+from ..db import engine
+from ..enums import TaskStatus
 from ..models import Task
 from ..provider_params import normalize_task_params
 from ..storage import get_task_output_dir
@@ -34,6 +38,14 @@ _ROLE_HINTS = {
     "style": "Align color palette, lighting, and material/rendering style with this reference.",
     "reference": "Use this as a general semantic reference.",
 }
+
+
+class GenerateContentCallError(RuntimeError):
+    def __init__(self, error_type: str, index: int, original: Exception):
+        super().__init__(str(original))
+        self.error_type = error_type
+        self.index = index
+        self.original = original
 
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
@@ -410,6 +422,94 @@ class GoogleImageProvider(BaseProvider):
 
         return mime_type, False
 
+    def _is_task_cancelled(self, task_id: str) -> bool:
+        with Session(engine) as session:
+            status = session.exec(select(Task.status).where(Task.id == task_id)).one_or_none()
+        return status == TaskStatus.CANCELLED.value
+
+    def _classify_generate_exception(self, exc: Exception) -> str:
+        name = type(exc).__name__.lower()
+        message = str(exc).lower()
+        combined = f"{name} {message}"
+
+        network_markers = (
+            "remoteprotocolerror",
+            "readtimeout",
+            "connecttimeout",
+            "timeout",
+            "connecterror",
+            "networkerror",
+            "transporterror",
+            "server disconnected",
+            "connection reset",
+            "temporarily unavailable",
+            "service unavailable",
+            "too many requests",
+            "rate limit",
+            "eof",
+        )
+        if any(marker in combined for marker in network_markers):
+            return "retryable_network_error"
+
+        parameter_markers = (
+            "invalidargument",
+            "badrequest",
+            "validation",
+            "invalid value",
+            "unsupported",
+            "malformed",
+            "missing required",
+            "permission denied",
+            "unauthorized",
+            "forbidden",
+        )
+        if isinstance(exc, (ValueError, TypeError)) or any(marker in combined for marker in parameter_markers):
+            return "parameter_error"
+
+        return "model_response_error"
+
+    def _generate_content_with_retry(
+        self,
+        *,
+        client: Any,
+        model_name: str,
+        request_contents: list[Any],
+        config: Any,
+        task_id: str,
+        index: int,
+        max_retries: int = 3,
+    ) -> Any:
+        for retry in range(max_retries):
+            try:
+                return client.models.generate_content(
+                    model=model_name,
+                    contents=request_contents,
+                    config=config,
+                )
+            except Exception as exc:  # noqa: BLE001
+                error_type = self._classify_generate_exception(exc)
+                logger.warning(
+                    "[provider=%s][stage=generate_content][task_id=%s][index=%s][retry=%s/%s][error_type=%s][error_class=%s] %s",
+                    self.name,
+                    task_id,
+                    index,
+                    retry + 1,
+                    max_retries,
+                    error_type,
+                    type(exc).__name__,
+                    exc,
+                )
+                if error_type == "retryable_network_error" and retry + 1 < max_retries:
+                    time.sleep(min(2**retry, 4))
+                    continue
+                raise GenerateContentCallError(error_type=error_type, index=index, original=exc) from exc
+
+        raise GenerateContentCallError(
+            error_type="retryable_network_error",
+            index=index,
+            original=RuntimeError("generate_content exhausted retries without response"),
+        )
+
     def generate(
         self,
         task: Task,
@@ -433,13 +533,26 @@ class GoogleImageProvider(BaseProvider):
 
         results: list[ProviderResultItem] = []
         max_attempts = max(1, task.n_outputs * settings.google_image_max_attempts_multiplier)
+        last_error_detail: str | None = None
         for attempt in range(max_attempts):
             if len(results) >= task.n_outputs:
                 break
 
+            current_index = len(results) + 1
+            if self._is_task_cancelled(str(task.id)):
+                logger.info(
+                    "[provider=%s][stage=cancelled][task_id=%s][index=%s] stop generating due to cancel request",
+                    self.name,
+                    task.id,
+                    current_index,
+                )
+                break
+
             logger.info(
-                "[provider=%s][stage=generate] model=%s attempt=%s/%s target_outputs=%s current_outputs=%s",
+                "[provider=%s][stage=generate][task_id=%s][index=%s] model=%s attempt=%s/%s target_outputs=%s current_outputs=%s",
                 self.name,
+                task.id,
+                current_index,
                 model_name,
                 attempt + 1,
                 max_attempts,
@@ -448,24 +561,49 @@ class GoogleImageProvider(BaseProvider):
             )
             request_contents = self._build_multimodal_contents(task, prompt_text)
             try:
-                response = client.models.generate_content(
+                response = self._generate_content_with_retry(
+                    client=client,
                     model=model_name,
-                    contents=request_contents,
+                    request_contents=request_contents,
                     config=config,
+                    task_id=str(task.id),
+                    index=current_index,
                 )
-            except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(
-                    f"[provider={self.name}][stage=generate][model={model_name}] "
-                    f"[{type(exc).__name__}] {exc!r}"
-                ) from exc
+            except GenerateContentCallError as exc:
+                last_error_detail = (
+                    f"[{exc.error_type}][index={exc.index}][class={type(exc.original).__name__}] {exc.original}"
+                )
+                if exc.error_type == "parameter_error":
+                    raise RuntimeError(
+                        f"[provider={self.name}][stage=generate][task_id={task.id}][model={model_name}] {last_error_detail}"
+                    ) from exc
+                continue
 
             try:
                 parts = self._extract_response_parts(response)
             except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(
-                    f"[provider={self.name}][stage=parse_response][model={model_name}] "
-                    f"failed to read response parts: {type(exc).__name__}"
-                ) from exc
+                error_type = "model_response_error"
+                last_error_detail = f"[{error_type}][index={current_index}][class={type(exc).__name__}] {exc}"
+                logger.warning(
+                    "[provider=%s][stage=parse_response][task_id=%s][index=%s][error_type=%s][error_class=%s] %s",
+                    self.name,
+                    task.id,
+                    current_index,
+                    error_type,
+                    type(exc).__name__,
+                    exc,
+                )
+                continue
+
+            if not parts:
+                last_error_detail = f"[model_response_error][index={current_index}] empty_parts"
+                logger.warning(
+                    "[provider=%s][stage=parse_response][task_id=%s][index=%s][error_type=model_response_error] empty image parts",
+                    self.name,
+                    task.id,
+                    current_index,
+                )
+                continue
 
             for part in parts:
                 if len(results) >= task.n_outputs:
@@ -544,7 +682,17 @@ class GoogleImageProvider(BaseProvider):
 
         if not results:
             raise RuntimeError(
-                f"[provider={self.name}][stage=parse_response][model={model_name}] no image data returned"
+                f"[provider={self.name}][stage=parse_response][task_id={task.id}][model={model_name}] no image data returned"
+                + (f"; last_error={last_error_detail}" if last_error_detail else "")
+            )
+        if len(results) < task.n_outputs:
+            logger.warning(
+                "[provider=%s][stage=partial_success][task_id=%s] generated=%s requested=%s last_error=%s",
+                self.name,
+                task.id,
+                len(results),
+                task.n_outputs,
+                last_error_detail,
             )
 
         task.model_name = model_name

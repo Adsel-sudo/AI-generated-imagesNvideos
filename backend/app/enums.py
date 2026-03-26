@@ -11,6 +11,7 @@ class TaskStatus(StrEnum):
     SAVING = "saving"
     DONE = "done"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class TaskType(StrEnum):

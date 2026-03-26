@@ -25,6 +25,12 @@ export function getTaskDetail(taskId: string) {
   return request<TaskDetail>(`/api/tasks/${taskId}`);
 }
 
+export function cancelTask(taskId: string) {
+  return request<TaskDetail>(`/api/tasks/${taskId}/cancel`, {
+    method: "POST",
+  });
+}
+
 export function getOutputDownloadUrl(taskId: string, outputId: string) {
   return `${getApiBaseUrl()}/api/tasks/${taskId}/outputs/${outputId}`;
 }
