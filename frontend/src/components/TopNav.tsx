@@ -5,10 +5,7 @@ import { usePathname } from "next/navigation";
 
 function NavItem({ href, label }: { href: string; label: string }) {
   const pathname = usePathname();
-  const isActive =
-    href === "/"
-      ? pathname === "/" || pathname.startsWith("/image")
-      : pathname === href || pathname.startsWith(`${href}/`);
+  const isActive = href === "/" ? pathname === "/" || pathname.startsWith("/image") : pathname === href;
 
   return (
     <Link
@@ -32,7 +29,6 @@ export function TopNav() {
       <div className="relative mx-auto flex h-[60px] w-full max-w-[1520px] items-center justify-between px-3 sm:px-4">
         <nav className="flex items-center gap-1.5">
           <NavItem href="/" label="AI图片" />
-          <NavItem href="/video" label="AI视频" />
         </nav>
         <span className="pointer-events-none absolute bottom-1.5 right-3 text-[11px] text-slate-500 sm:right-4">
           当前模型：Nano Banana 2
