@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any
 
+from .config import settings
 from .constants import DEFAULT_N_OUTPUTS
 
+try:
+    from google import genai
+except Exception:  # noqa: BLE001
+    genai = None
+
+logger = logging.getLogger(__name__)
 
 SAFE_MODE_KEYWORDS = (
     "婴儿",
@@ -64,7 +73,7 @@ class PromptOptimizer:
         style_preference = str(usage_options.get("style_preference") or "").strip()
         requested_size = str(usage_options.get("size") or "").strip()
         reference_breakdown = self._build_reference_breakdown(references)
-        continuation_mode = reference_breakdown.get("composition", 0) > 0
+        continuation_mode = bool(reference_breakdown.get("composition", 0) > 0)
         single_frame_constraints = self._build_single_frame_constraints(normalized_targets)
 
         structured_summary = {
@@ -82,50 +91,30 @@ class PromptOptimizer:
             ],
         }
 
-        safety_line = "启用安全风格约束，避免不当内容表达。" if safe_mode else ""
-        style_line = f"风格偏好：{style_preference}。" if style_preference else ""
-        size_line = f"优先按尺寸 {requested_size} 进行构图与出图。" if requested_size else ""
-        reference_role_line = self._build_reference_role_line(reference_breakdown)
-        edit_plan = self._build_edit_plan(
-            cleaned_request=cleaned_request,
-            reference_breakdown=reference_breakdown,
-            style_preference=style_preference,
-            continuation_mode=continuation_mode,
-        )
-        continuation_line = (
-            "基于参考图所示主体与构图继续优化，仅修改用户本轮指定内容，未提及部分保持上一轮视觉结果一致。"
-            if continuation_mode
-            else ""
-        )
-        single_frame_line = " ".join(single_frame_constraints)
-        optimized_prompt_cn = (
-            f"请根据以下需求生成高质量{'视频' if structured_summary['task_type'] == 'video' else '图片'}素材。\n"
-            f"【本轮用户目标】{cleaned_request}\n"
-            f"{chr(10).join(edit_plan)}\n"
-            f"{reference_role_line}"
-            f"{continuation_line}"
-            f"{single_frame_line}"
-            f"{style_line}"
-            f"{size_line}"
-            f"{safety_line}"
-        ).strip()
+        llm_input = {
+            "task_type": structured_summary["task_type"],
+            "raw_request": cleaned_request,
+            "references": {
+                "count": len(references),
+                "breakdown": reference_breakdown,
+            },
+            "usage_options": usage_options,
+            "generation_targets": normalized_targets,
+            "continuation_mode": continuation_mode,
+            "safe_mode": safe_mode,
+            "style_preference": style_preference,
+            "requested_size": requested_size,
+            "edit_plan": self._build_edit_plan(
+                cleaned_request=cleaned_request,
+                reference_breakdown=reference_breakdown,
+                style_preference=style_preference,
+                continuation_mode=continuation_mode,
+            ),
+            "reference_notes": self._summarize_references(references),
+            "single_frame_constraints": single_frame_constraints,
+        }
 
-        target_lines = []
-        for target in normalized_targets:
-            dimension = target.get("aspect_ratio") or f"{target.get('width') or '?'}x{target.get('height') or '?'}"
-            target_lines.append(f"- {target['target_type']}：{dimension}，生成 {target['n_outputs']} 张")
-        reference_lines = self._summarize_references(references)
-        reference_section = f"{chr(10).join(reference_lines)}{chr(10)}" if reference_lines else ""
-
-        generation_prompt = (
-            f"{optimized_prompt_cn}\n"
-            "输出要求：\n"
-            f"{chr(10).join(target_lines)}\n"
-            f"{reference_section}"
-            f"{chr(10).join(f'- {line}' for line in single_frame_constraints)}\n"
-            "请确保每个端侧目标独立生成，不共享裁切版本。"
-            "当模型无法严格锁定像素尺寸时，至少保持目标宽高比与构图安全边界一致。"
-        ).strip()
+        prompts = self._generate_prompts_with_llm(llm_input)
 
         normalized_params = {
             "safe_mode": safe_mode,
@@ -136,10 +125,194 @@ class PromptOptimizer:
 
         return {
             "structured_summary": structured_summary,
-            "optimized_prompt_cn": optimized_prompt_cn,
-            "generation_prompt": generation_prompt,
+            "optimized_prompt_cn": prompts["optimized_prompt_cn"],
+            "generation_prompt": prompts["generation_prompt"],
             "normalized_params": normalized_params,
         }
+
+    def _generate_prompts_with_llm(self, llm_input: dict[str, Any]) -> dict[str, str]:
+        fallback = self._build_fallback_prompts(llm_input)
+        model_name = settings.prompt_optimizer_model
+
+        if genai is None:
+            logger.warning(
+                "[prompt_optimizer][stage=llm] google-genai sdk unavailable, fallback to template output",
+            )
+            return fallback
+
+        api_key = self._api_key()
+        if not api_key:
+            logger.warning(
+                "[prompt_optimizer][stage=llm] missing GOOGLE_GENAI_API_KEY/GOOGLE_API_KEY, fallback to template output",
+            )
+            return fallback
+
+        system_instruction = (
+            "你是资深中文提示词优化专家。你的任务是把用户图像生成需求改写成高质量提示词。"
+            "重点能力：纠正错别字、理解多轮编辑意图、在 continuation_mode=true 时保持主体不变且仅修改用户指明的背景/风格/环境、"
+            "并整合参考图语义。你必须输出严格 JSON，不要输出任何额外解释。"
+        )
+
+        user_instruction = (
+            "基于以下输入生成两个字段：\n"
+            "1) optimized_prompt_cn: 给中文用户看的优化版提示词，语义清晰、自然、无冗余。\n"
+            "2) generation_prompt: 给图像模型用的最终生成提示词，需包含关键约束（主体保持、参考图语义、尺寸/比例、端侧目标独立生成、单图非拼版）。\n"
+            "注意：\n"
+            "- continuation_mode=true 时，强调“未提及部分保持不变”。\n"
+            "- 若存在 composition/product/style/pose 参考图，分别写明其作用。\n"
+            "- safe_mode=true 时，措辞需更安全克制。\n"
+            "- 输出 JSON schema: {\"optimized_prompt_cn\": string, \"generation_prompt\": string}\n\n"
+            f"INPUT_JSON:\n{json.dumps(llm_input, ensure_ascii=False, indent=2)}"
+        )
+
+        try:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[system_instruction, user_instruction],
+            )
+            parsed = self._extract_json_from_response(response)
+            if not parsed:
+                logger.warning(
+                    "[prompt_optimizer][stage=llm] response parse failed model=%s, fallback to template output",
+                    model_name,
+                )
+                return fallback
+
+            optimized_prompt_cn = str(parsed.get("optimized_prompt_cn") or "").strip()
+            generation_prompt = str(parsed.get("generation_prompt") or "").strip()
+            if not optimized_prompt_cn or not generation_prompt:
+                logger.warning(
+                    "[prompt_optimizer][stage=llm] missing fields in llm output model=%s, fallback to template output",
+                    model_name,
+                )
+                return fallback
+
+            return {
+                "optimized_prompt_cn": optimized_prompt_cn,
+                "generation_prompt": generation_prompt,
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[prompt_optimizer][stage=llm] llm call failed model=%s err=%s, fallback to template output",
+                model_name,
+                exc,
+            )
+            return fallback
+
+    def _build_fallback_prompts(self, llm_input: dict[str, Any]) -> dict[str, str]:
+        task_type = str(llm_input.get("task_type") or "image")
+        cleaned_request = str(llm_input.get("raw_request") or "").strip()
+        continuation_mode = bool(llm_input.get("continuation_mode"))
+        style_preference = str(llm_input.get("style_preference") or "").strip()
+        requested_size = str(llm_input.get("requested_size") or "").strip()
+        safe_mode = bool(llm_input.get("safe_mode"))
+        edit_plan = llm_input.get("edit_plan") if isinstance(llm_input.get("edit_plan"), list) else []
+        single_frame_constraints = (
+            llm_input.get("single_frame_constraints")
+            if isinstance(llm_input.get("single_frame_constraints"), list)
+            else []
+        )
+        reference_breakdown = {}
+        references_obj = llm_input.get("references")
+        if isinstance(references_obj, dict):
+            breakdown = references_obj.get("breakdown")
+            if isinstance(breakdown, dict):
+                reference_breakdown = {str(k): int(v) for k, v in breakdown.items() if isinstance(v, int)}
+
+        safety_line = "启用安全风格约束，避免不当内容表达。" if safe_mode else ""
+        style_line = f"风格偏好：{style_preference}。" if style_preference else ""
+        size_line = f"优先按尺寸 {requested_size} 进行构图与出图。" if requested_size else ""
+        continuation_line = (
+            "基于参考图所示主体与构图继续优化，仅修改用户本轮指定内容，未提及部分保持上一轮视觉结果一致。"
+            if continuation_mode
+            else ""
+        )
+
+        optimized_prompt_cn = (
+            f"请根据以下需求生成高质量{'视频' if task_type == 'video' else '图片'}素材。\n"
+            f"【本轮用户目标】{cleaned_request}\n"
+            f"{chr(10).join(str(line) for line in edit_plan if str(line).strip())}\n"
+            f"{self._build_reference_role_line(reference_breakdown)}"
+            f"{continuation_line}"
+            f"{' '.join(str(line) for line in single_frame_constraints if str(line).strip())}"
+            f"{style_line}"
+            f"{size_line}"
+            f"{safety_line}"
+        ).strip()
+
+        target_lines = []
+        generation_targets = llm_input.get("generation_targets")
+        if isinstance(generation_targets, list):
+            for target in generation_targets:
+                if not isinstance(target, dict):
+                    continue
+                dimension = target.get("aspect_ratio") or f"{target.get('width') or '?'}x{target.get('height') or '?'}"
+                target_lines.append(
+                    f"- {target.get('target_type') or 'other'}：{dimension}，生成 {target.get('n_outputs') or DEFAULT_N_OUTPUTS} 张",
+                )
+
+        generation_prompt = (
+            f"{optimized_prompt_cn}\n"
+            "输出要求：\n"
+            f"{chr(10).join(target_lines)}\n"
+            f"{chr(10).join(f'- {line}' for line in single_frame_constraints if str(line).strip())}\n"
+            "请确保每个端侧目标独立生成，不共享裁切版本。"
+            "当模型无法严格锁定像素尺寸时，至少保持目标宽高比与构图安全边界一致。"
+        ).strip()
+
+        return {
+            "optimized_prompt_cn": optimized_prompt_cn,
+            "generation_prompt": generation_prompt,
+        }
+
+    def _extract_json_from_response(self, response: Any) -> dict[str, Any] | None:
+        text = str(getattr(response, "text", "") or "").strip()
+        if not text:
+            return None
+
+        parsed = self._json_loads_safe(text)
+        if parsed is not None:
+            return parsed
+
+        if "```" in text:
+            fenced = self._extract_fenced_code(text)
+            if fenced:
+                parsed = self._json_loads_safe(fenced)
+                if parsed is not None:
+                    return parsed
+
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            candidate = text[start : end + 1]
+            return self._json_loads_safe(candidate)
+        return None
+
+    def _json_loads_safe(self, text: str) -> dict[str, Any] | None:
+        try:
+            data = json.loads(text)
+        except Exception:  # noqa: BLE001
+            return None
+        if isinstance(data, dict):
+            return data
+        return None
+
+    def _extract_fenced_code(self, text: str) -> str | None:
+        chunks = text.split("```")
+        if len(chunks) < 3:
+            return None
+        for chunk in chunks[1:]:
+            cleaned = chunk.strip()
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:].strip()
+            if cleaned.startswith("{") and cleaned.endswith("}"):
+                return cleaned
+        return None
+
+    def _api_key(self) -> str:
+        api_key = settings.google_genai_api_key or settings.google_api_key or ""
+        return api_key.replace("\ufeff", "").strip()
 
     def _normalize_targets(self, generation_targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         normalized = []
@@ -154,7 +327,7 @@ class PromptOptimizer:
                     "width": raw.get("width"),
                     "height": raw.get("height"),
                     "n_outputs": int(raw.get("n_outputs") or DEFAULT_N_OUTPUTS),
-                }
+                },
             )
 
         if not normalized:
@@ -165,7 +338,7 @@ class PromptOptimizer:
                     "width": None,
                     "height": None,
                     "n_outputs": DEFAULT_N_OUTPUTS,
-                }
+                },
             )
 
         return normalized

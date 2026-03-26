@@ -184,6 +184,25 @@ def generate_task(task_id: str):
                 session.commit()
 
             for target_type, target_task in targets:
+                session.refresh(task)
+                if task.status == TaskStatus.CANCELLED.value:
+                    _update_task_status(
+                        session,
+                        task,
+                        status=TaskStatus.CANCELLED,
+                        progress_message=f"已停止 {task.progress_current}/{task.progress_total}",
+                        finished=True,
+                    )
+                    session.commit()
+                    logger.info(
+                        "[task=%s][stage=cancelled_before_target] target=%s progress=%s/%s",
+                        task_id,
+                        target_type or "default",
+                        task.progress_current,
+                        task.progress_total,
+                    )
+                    return
+
                 logger.info(
                     "[task=%s][stage=provider_generate] provider=%s target=%s n_outputs=%s",
                     task_id,
@@ -207,6 +226,25 @@ def generate_task(task_id: str):
             if task_type == TaskType.PROMPT.value:
                 pass
 
+            session.refresh(task)
+            if task.status == TaskStatus.CANCELLED.value:
+                _update_task_status(
+                    session,
+                    task,
+                    status=TaskStatus.CANCELLED,
+                    progress_message=f"已停止 {task.progress_current}/{task.progress_total}",
+                    finished=True,
+                )
+                session.commit()
+                logger.info(
+                    "[task=%s][stage=cancelled_after_generate] provider=%s model=%s outputs=%s",
+                    task_id,
+                    task.provider,
+                    task.model_name,
+                    len(all_outputs),
+                )
+                return
+
             task.progress_current = max(task.progress_current, len(all_outputs))
             task.progress_total = task.n_outputs
             _update_task_status(
@@ -228,6 +266,17 @@ def generate_task(task_id: str):
         with Session(engine) as session:
             task = session.get(Task, task_id)
             if task:
+                if task.status == TaskStatus.CANCELLED.value:
+                    _update_task_status(
+                        session,
+                        task,
+                        status=TaskStatus.CANCELLED,
+                        progress_message=f"已停止 {task.progress_current}/{task.progress_total}",
+                        finished=True,
+                    )
+                    session.commit()
+                    logger.info("[task=%s][stage=cancelled_exception_ignored] %s", task_id, exc)
+                    return
                 _update_task_status(
                     session,
                     task,

@@ -11,6 +11,7 @@ from sqlmodel import Session, desc, select
 
 from .constants import DEFAULT_PROVIDER
 from .config import settings
+from .celery_app import celery_app
 from .db import engine
 from .enums import TaskStatus
 from .models import Output, Task, utcnow
@@ -210,6 +211,38 @@ def get_task(task_id: str):
             "outputs": outputs_data,
             "outputs_by_target": outputs_by_target,
         }
+
+
+@router.post("/api/tasks/{task_id}/cancel")
+def cancel_task(task_id: str):
+    with Session(engine) as session:
+        task = session.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="task not found")
+
+        if task.status in {TaskStatus.DONE.value, TaskStatus.FAILED.value, TaskStatus.CANCELLED.value}:
+            return task
+
+        task.status = TaskStatus.CANCELLED.value
+        task.progress_message = "已停止"
+        task.error_message = None
+        task.updated_at = utcnow()
+        task.finished_at = utcnow()
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+
+        if task.celery_task_id:
+            try:
+                celery_app.control.revoke(task.celery_task_id, terminate=False)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[stage=cancel_task][task=%s] celery revoke failed: %s",
+                    task_id,
+                    exc,
+                )
+
+        return task
 
 
 @router.get("/api/tasks/{task_id}/outputs/{output_id}")
