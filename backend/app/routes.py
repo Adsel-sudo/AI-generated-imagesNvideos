@@ -123,6 +123,9 @@ def generate_task_from_prompt(payload: PromptGenerateTaskRequest):
             request_text=payload.optimized_prompt_cn,
             prompt_final=payload.generation_prompt,
             n_outputs=total_outputs,
+            progress_current=0,
+            progress_total=total_outputs,
+            progress_message="排队中",
             status=TaskStatus.QUEUED.value,
         )
         session.add(task)
@@ -148,6 +151,9 @@ def create_task(payload: CreateTaskRequest):
             params_json=json.dumps(payload.params, ensure_ascii=False),
             request_text=payload.request_text,
             n_outputs=payload.n_outputs,
+            progress_current=0,
+            progress_total=payload.n_outputs,
+            progress_message="排队中",
             status=TaskStatus.QUEUED.value,
         )
         session.add(task)

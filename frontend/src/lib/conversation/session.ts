@@ -44,6 +44,9 @@ export const createMessage = (payload: {
   size_text?: string;
   style_preference?: string;
   error_message?: string;
+  progress_current?: number;
+  progress_total?: number;
+  progress_message?: string;
 }): ConversationMessage => ({
   id: createId(),
   created_at: Date.now(),
@@ -55,6 +58,9 @@ export const createMessage = (payload: {
   size_text: payload.size_text,
   style_preference: payload.style_preference,
   error_message: payload.error_message,
+  progress_current: payload.progress_current,
+  progress_total: payload.progress_total,
+  progress_message: payload.progress_message,
 });
 
 const parseConversations = (raw: string | null): Conversation[] => {

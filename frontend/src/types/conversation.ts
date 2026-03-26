@@ -21,6 +21,9 @@ export type ConversationMessage = {
   size_text?: string;
   style_preference?: string;
   error_message?: string;
+  progress_current?: number;
+  progress_total?: number;
+  progress_message?: string;
 };
 
 export type Conversation = {
