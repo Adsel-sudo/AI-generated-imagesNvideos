@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import base64
-import math
 import logging
+import math
 import mimetypes
 import re
+from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageFilter, ImageStat
 
 from ..config import settings
 from ..models import Task
@@ -24,6 +25,14 @@ except Exception:  # noqa: BLE001
     genai_types = None
 
 logger = logging.getLogger(__name__)
+
+_ROLE_HINTS = {
+    "product": "Keep product identity, shape, and key details consistent with this reference.",
+    "composition": "Follow the scene composition/layout and background relationship from this reference.",
+    "pose": "Align subject pose and body arrangement with this reference.",
+    "style": "Align color palette, lighting, and material/rendering style with this reference.",
+    "reference": "Use this as a general semantic reference.",
+}
 
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
@@ -48,11 +57,19 @@ class GoogleImageProvider(BaseProvider):
             raise ValueError(f"[provider={self.name}][stage=config] missing GOOGLE_GENAI_API_KEY/GOOGLE_API_KEY")
         return api_key
 
+    def _get_references(self, task: Task) -> list[dict[str, Any]]:
+        params = normalize_task_params(task)
+        params_extra = params.extra if isinstance(params.extra, dict) else {}
+        references = params_extra.get("references")
+        if not isinstance(references, list):
+            return []
+        return [item for item in references if isinstance(item, dict)]
+
     def _build_prompt(self, task: Task) -> str:
         params = normalize_task_params(task)
         params_extra = params.extra if isinstance(params.extra, dict) else {}
         current_target = params_extra.get("current_target") if isinstance(params_extra.get("current_target"), dict) else {}
-        references = params_extra.get("references") if isinstance(params_extra.get("references"), list) else []
+        references = self._get_references(task)
 
         primary_text = (task.prompt_final or task.request_text or "").strip()
         lines = [primary_text] if primary_text else []
@@ -75,8 +92,6 @@ class GoogleImageProvider(BaseProvider):
         if references:
             role_count: dict[str, int] = {}
             for item in references:
-                if not isinstance(item, dict):
-                    continue
                 role = str(item.get("role") or "reference").strip().lower()
                 role_count[role] = role_count.get(role, 0) + 1
             if role_count.get("product"):
@@ -140,6 +155,110 @@ class GoogleImageProvider(BaseProvider):
 
         return genai_types.GenerateContentConfig()
 
+    def _resolve_reference_path(self, raw_path: str) -> Path:
+        path = Path(raw_path)
+        if path.is_absolute():
+            return path
+        return Path.cwd() / path
+
+    def _build_multimodal_contents(self, task: Task, prompt_text: str) -> list[Any]:
+        contents: list[Any] = [prompt_text]
+        references = self._get_references(task)
+        if not references:
+            return contents
+
+        if genai_types is None or not hasattr(genai_types, "Part"):
+            logger.warning(
+                "[provider=%s][stage=references] google-genai types.Part unavailable; falling back to prompt-only references",
+                self.name,
+            )
+            return contents
+
+        attached_count = 0
+        for idx, item in enumerate(references, start=1):
+            role = str(item.get("role") or "reference").strip().lower()
+            role_hint = _ROLE_HINTS.get(role, _ROLE_HINTS["reference"])
+            raw_path = item.get("file_path")
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                logger.warning(
+                    "[provider=%s][stage=references] skip reference #%s due to invalid file_path: %r",
+                    self.name,
+                    idx,
+                    raw_path,
+                )
+                continue
+
+            ref_path = self._resolve_reference_path(raw_path.strip())
+            if not ref_path.exists() or not ref_path.is_file():
+                logger.warning(
+                    "[provider=%s][stage=references] reference file not found: %s",
+                    self.name,
+                    ref_path,
+                )
+                continue
+
+            try:
+                data = ref_path.read_bytes()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[provider=%s][stage=references] failed reading reference file=%s err=%s",
+                    self.name,
+                    ref_path,
+                    exc,
+                )
+                continue
+
+            mime_type = mimetypes.guess_type(ref_path.name)[0] or "image/png"
+            if not mime_type.startswith("image/"):
+                logger.warning(
+                    "[provider=%s][stage=references] unsupported mime=%s for file=%s, trying image/jpeg fallback",
+                    self.name,
+                    mime_type,
+                    ref_path,
+                )
+                mime_type = "image/jpeg"
+
+            contents.append(f"Reference #{idx} role={role}: {role_hint}")
+
+            part_obj = None
+            try:
+                part_obj = genai_types.Part.from_bytes(data=data, mime_type=mime_type)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[provider=%s][stage=references] Part.from_bytes failed for file=%s role=%s mime=%s err=%s; trying PIL fallback",
+                    self.name,
+                    ref_path,
+                    role,
+                    mime_type,
+                    exc,
+                )
+
+            if part_obj is not None:
+                contents.append(part_obj)
+                attached_count += 1
+                continue
+
+            try:
+                with Image.open(ref_path) as image:
+                    contents.append(image.copy())
+                    attached_count += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[provider=%s][stage=references] PIL fallback failed for file=%s role=%s err=%s",
+                    self.name,
+                    ref_path,
+                    role,
+                    exc,
+                )
+
+        logger.info(
+            "[provider=%s][stage=references] total=%s attached=%s",
+            self.name,
+            len(references),
+            attached_count,
+        )
+        return contents
+
     def _extract_response_parts(self, response: Any) -> list[Any]:
         parts = _safe_getattr(response, "parts", None) or []
         if parts:
@@ -152,6 +271,108 @@ class GoogleImageProvider(BaseProvider):
             if candidate_parts:
                 return list(candidate_parts)
         return []
+
+    def _count_runs(self, values: list[float], threshold: float, min_run: int, margin: int) -> int:
+        runs = 0
+        run_start = -1
+        for index, value in enumerate(values):
+            if value >= threshold:
+                if run_start < 0:
+                    run_start = index
+                continue
+            if run_start >= 0:
+                run_end = index - 1
+                if run_end - run_start + 1 >= min_run and run_start >= margin and run_end <= len(values) - margin - 1:
+                    runs += 1
+                run_start = -1
+        if run_start >= 0:
+            run_end = len(values) - 1
+            if run_end - run_start + 1 >= min_run and run_start >= margin and run_end <= len(values) - margin - 1:
+                runs += 1
+        return runs
+
+    def _detect_collage_layout(self, image_path: Path, expected_outputs: int) -> tuple[bool, dict[str, Any]]:
+        if expected_outputs <= 1:
+            return False, {"reason": "single_output"}
+
+        with Image.open(image_path) as image:
+            gray = image.convert("L")
+            gray.thumbnail((640, 640))
+            width, height = gray.size
+            if width < 96 or height < 96:
+                return False, {"reason": "image_too_small", "width": width, "height": height}
+
+            edges = gray.filter(ImageFilter.FIND_EDGES)
+            edge_pixels = edges.load()
+            gray_pixels = gray.load()
+            stride = 2
+            sample_rows = max(1, len(range(0, height, stride)))
+            sample_cols = max(1, len(range(0, width, stride)))
+
+            vertical_density: list[float] = []
+            for x in range(width):
+                count = 0
+                for y in range(0, height, stride):
+                    if edge_pixels[x, y] >= 90:
+                        count += 1
+                vertical_density.append(count / sample_rows)
+
+            horizontal_density: list[float] = []
+            for y in range(height):
+                count = 0
+                for x in range(0, width, stride):
+                    if edge_pixels[x, y] >= 90:
+                        count += 1
+                horizontal_density.append(count / sample_cols)
+
+            margin_x = max(3, int(width * 0.05))
+            margin_y = max(3, int(height * 0.05))
+            min_run_x = max(2, width // 150)
+            min_run_y = max(2, height // 150)
+
+            vertical_split_runs = self._count_runs(vertical_density, threshold=0.56, min_run=min_run_x, margin=margin_x)
+            horizontal_split_runs = self._count_runs(horizontal_density, threshold=0.56, min_run=min_run_y, margin=margin_y)
+
+            bright_or_dark_uniform_cols: list[float] = []
+            for x in range(width):
+                values = [gray_pixels[x, y] for y in range(0, height, stride)]
+                mean_val = sum(values) / len(values)
+                if 18 <= mean_val <= 237:
+                    bright_or_dark_uniform_cols.append(0.0)
+                    continue
+                std_val = ImageStat.Stat(Image.new("L", (1, len(values)), bytes(values))).stddev[0]
+                bright_or_dark_uniform_cols.append(1.0 if std_val <= 10.0 else 0.0)
+
+            bright_or_dark_uniform_rows: list[float] = []
+            for y in range(height):
+                values = [gray_pixels[x, y] for x in range(0, width, stride)]
+                mean_val = sum(values) / len(values)
+                if 18 <= mean_val <= 237:
+                    bright_or_dark_uniform_rows.append(0.0)
+                    continue
+                std_val = ImageStat.Stat(Image.new("L", (len(values), 1), bytes(values))).stddev[0]
+                bright_or_dark_uniform_rows.append(1.0 if std_val <= 10.0 else 0.0)
+
+            vertical_gutter_runs = self._count_runs(bright_or_dark_uniform_cols, threshold=1.0, min_run=min_run_x, margin=margin_x)
+            horizontal_gutter_runs = self._count_runs(bright_or_dark_uniform_rows, threshold=1.0, min_run=min_run_y, margin=margin_y)
+
+            has_grid = vertical_split_runs >= 1 and horizontal_split_runs >= 1
+            has_multi_split = vertical_split_runs >= 2 or horizontal_split_runs >= 2
+            has_uniform_gutter = vertical_gutter_runs >= 1 or horizontal_gutter_runs >= 1
+
+            detected = has_grid or (has_multi_split and has_uniform_gutter)
+            metrics = {
+                "width": width,
+                "height": height,
+                "vertical_split_runs": vertical_split_runs,
+                "horizontal_split_runs": horizontal_split_runs,
+                "vertical_gutter_runs": vertical_gutter_runs,
+                "horizontal_gutter_runs": horizontal_gutter_runs,
+                "has_grid": has_grid,
+                "has_multi_split": has_multi_split,
+                "has_uniform_gutter": has_uniform_gutter,
+            }
+            return detected, metrics
 
     def _save_part_image(self, part: Any, file_path: Any) -> tuple[str, bool]:
         mime_type = "image/png"
@@ -206,7 +427,7 @@ class GoogleImageProvider(BaseProvider):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         results: list[ProviderResultItem] = []
-        max_attempts = max(1, task.n_outputs)
+        max_attempts = max(1, task.n_outputs * settings.google_image_max_attempts_multiplier)
         for attempt in range(max_attempts):
             if len(results) >= task.n_outputs:
                 break
@@ -220,10 +441,11 @@ class GoogleImageProvider(BaseProvider):
                 task.n_outputs,
                 len(results),
             )
+            request_contents = self._build_multimodal_contents(task, prompt_text)
             try:
                 response = client.models.generate_content(
                     model=model_name,
-                    contents=[prompt_text],
+                    contents=request_contents,
                     config=config,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -271,6 +493,35 @@ class GoogleImageProvider(BaseProvider):
                         width, height = image.size
                 except Exception:  # noqa: BLE001
                     pass
+
+                if settings.google_image_collage_guard_enabled:
+                    try:
+                        is_collage, collage_metrics = self._detect_collage_layout(file_path, task.n_outputs)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "[provider=%s][stage=collage_guard] detect_failed file=%s err=%s",
+                            self.name,
+                            file_path,
+                            exc,
+                        )
+                        is_collage = False
+                        collage_metrics = {"detect_error": str(exc)}
+
+                    if is_collage:
+                        logger.warning(
+                            "[provider=%s][stage=collage_guard] detected_collage=%s retry_on_collage=%s file=%s metrics=%s",
+                            self.name,
+                            is_collage,
+                            settings.google_image_retry_on_collage,
+                            file_path,
+                            collage_metrics,
+                        )
+                        if settings.google_image_retry_on_collage:
+                            try:
+                                file_path.unlink(missing_ok=True)
+                            except Exception:  # noqa: BLE001
+                                pass
+                            continue
 
                 results.append(
                     ProviderResultItem(

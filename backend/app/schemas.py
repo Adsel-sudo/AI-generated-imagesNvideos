@@ -57,6 +57,9 @@ class TaskResponse(BaseModel):
     prompt_final: Optional[str] = None
     model_name: Optional[str] = None
     n_outputs: int
+    progress_current: int = 0
+    progress_total: int = 0
+    progress_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     started_at: Optional[datetime] = None

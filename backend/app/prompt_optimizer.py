@@ -65,6 +65,7 @@ class PromptOptimizer:
         requested_size = str(usage_options.get("size") or "").strip()
         reference_breakdown = self._build_reference_breakdown(references)
         continuation_mode = reference_breakdown.get("composition", 0) > 0
+        single_frame_constraints = self._build_single_frame_constraints(normalized_targets)
 
         structured_summary = {
             "task_type": (task_type or "image").strip().lower(),
@@ -96,12 +97,14 @@ class PromptOptimizer:
             if continuation_mode
             else ""
         )
+        single_frame_line = " ".join(single_frame_constraints)
         optimized_prompt_cn = (
             f"请根据以下需求生成高质量{'视频' if structured_summary['task_type'] == 'video' else '图片'}素材。\n"
             f"【本轮用户目标】{cleaned_request}\n"
             f"{chr(10).join(edit_plan)}\n"
             f"{reference_role_line}"
             f"{continuation_line}"
+            f"{single_frame_line}"
             f"{style_line}"
             f"{size_line}"
             f"{safety_line}"
@@ -119,6 +122,7 @@ class PromptOptimizer:
             "输出要求：\n"
             f"{chr(10).join(target_lines)}\n"
             f"{reference_section}"
+            f"{chr(10).join(f'- {line}' for line in single_frame_constraints)}\n"
             "请确保每个端侧目标独立生成，不共享裁切版本。"
             "当模型无法严格锁定像素尺寸时，至少保持目标宽高比与构图安全边界一致。"
         ).strip()
@@ -258,6 +262,33 @@ class PromptOptimizer:
         if counts.get("style", 0):
             lines.append("风格参考图用于统一视觉风格、色彩与光影。")
         return "".join(lines)
+
+    def _build_single_frame_constraints(self, generation_targets: list[dict[str, Any]]) -> list[str]:
+        has_wide_target = any(self._is_wide_target(target) for target in generation_targets)
+        lines = [
+            "单张图必须是单主体、单场景、单一完整画面，不得在同一张图中拼接多个候选。",
+            "禁止拼版图、禁止多宫格、禁止九宫格、禁止多栏排版、禁止分屏对比。",
+            "不要在单张图中出现多个相互独立的小图块、小画框或分区画面。",
+        ]
+        if has_wide_target:
+            lines.append("横图比例（如16:9）必须保持单张完整横幅构图，不得把多个场景或多个主体并排拼接在同一张图中。")
+        return lines
+
+    def _is_wide_target(self, target: dict[str, Any]) -> bool:
+        aspect_ratio = str(target.get("aspect_ratio") or "").strip()
+        if ":" in aspect_ratio:
+            left, _, right = aspect_ratio.partition(":")
+            try:
+                width_ratio = float(left.strip())
+                height_ratio = float(right.strip())
+                return width_ratio > 0 and height_ratio > 0 and (width_ratio / height_ratio) >= 1.3
+            except ValueError:
+                return False
+        width = target.get("width")
+        height = target.get("height")
+        if isinstance(width, (int, float)) and isinstance(height, (int, float)) and height:
+            return (float(width) / float(height)) >= 1.3
+        return False
 
 
 prompt_optimizer = PromptOptimizer()

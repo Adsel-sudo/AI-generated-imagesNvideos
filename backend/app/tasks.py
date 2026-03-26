@@ -34,6 +34,7 @@ def _update_task_status(
     *,
     status: TaskStatus,
     error_message: str | None = None,
+    progress_message: str | None = None,
     started: bool = False,
     finished: bool = False,
 ) -> None:
@@ -45,6 +46,8 @@ def _update_task_status(
         task.finished_at = utcnow()
     if error_message:
         task.error_message = error_message
+    if progress_message is not None:
+        task.progress_message = progress_message
     session.add(task)
 
 
@@ -128,6 +131,9 @@ def generate_task(task_id: str):
                 settings.prompt_optimizer_model,
             )
             _update_task_status(session, task, status=TaskStatus.RUNNING, started=True)
+            task.progress_current = 0
+            task.progress_total = task.n_outputs
+            task.progress_message = f"生成中 0/{task.n_outputs}"
             session.commit()
             session.refresh(task)
 
@@ -163,7 +169,7 @@ def generate_task(task_id: str):
             task.prompt_final = main_prompt or task.prompt_final
             task.model_name = task.model_name or getattr(targets[0][1], "model_name", None)
 
-            _update_task_status(session, task, status=TaskStatus.SAVING)
+            _update_task_status(session, task, status=TaskStatus.SAVING, progress_message=f"保存结果 0/{task.n_outputs}")
 
             if task_type in {TaskType.IMAGE.value, TaskType.VIDEO.value}:
                 next_index = 1
@@ -188,10 +194,24 @@ def generate_task(task_id: str):
                     )
                     next_index += 1
                     session.add(output)
+                    task.progress_current = min(task.n_outputs, task.progress_current + 1)
+                    task.progress_total = task.n_outputs
+                    task.progress_message = f"生成中 {task.progress_current}/{task.progress_total}"
+                    task.updated_at = utcnow()
+                    session.add(task)
+                    session.commit()
             elif task_type == TaskType.PROMPT.value:
                 pass
 
-            _update_task_status(session, task, status=TaskStatus.DONE, finished=True)
+            task.progress_current = max(task.progress_current, len(all_outputs))
+            task.progress_total = task.n_outputs
+            _update_task_status(
+                session,
+                task,
+                status=TaskStatus.DONE,
+                progress_message=f"已完成 {task.progress_current}/{task.progress_total}",
+                finished=True,
+            )
             session.commit()
             logger.info(
                 "[task=%s][stage=done] provider=%s model=%s outputs=%s",
@@ -212,6 +232,7 @@ def generate_task(task_id: str):
                         f"[provider={task.provider or 'unknown'}][stage=generate]"
                         f"[{type(exc).__name__}] {exc!r}"
                     ),
+                    progress_message=f"失败 {task.progress_current}/{task.progress_total}",
                     finished=True,
                 )
                 session.commit()

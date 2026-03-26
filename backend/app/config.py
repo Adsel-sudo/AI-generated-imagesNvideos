@@ -30,6 +30,20 @@ class Settings(BaseSettings):
         default=DEFAULT_GOOGLE_VIDEO_MODEL,
         validation_alias="GOOGLE_VIDEO_MODEL",
     )
+    google_image_collage_guard_enabled: bool = Field(
+        default=True,
+        validation_alias="GOOGLE_IMAGE_COLLAGE_GUARD_ENABLED",
+    )
+    google_image_retry_on_collage: bool = Field(
+        default=True,
+        validation_alias="GOOGLE_IMAGE_RETRY_ON_COLLAGE",
+    )
+    google_image_max_attempts_multiplier: int = Field(
+        default=3,
+        ge=1,
+        le=8,
+        validation_alias="GOOGLE_IMAGE_MAX_ATTEMPTS_MULTIPLIER",
+    )
     prompt_optimizer_model: str = Field(
         default=DEFAULT_PROMPT_OPTIMIZER_MODEL,
         validation_alias="PROMPT_OPTIMIZER_MODEL",

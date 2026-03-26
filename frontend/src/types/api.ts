@@ -52,6 +52,9 @@ export interface TaskDetail {
   params_json?: TaskParamsJson | null;
   status: TaskStatus;
   n_outputs?: number | null;
+  progress_current?: number | null;
+  progress_total?: number | null;
+  progress_message?: string | null;
   model_name?: string | null;
   prompt_final?: string | null;
   error_message?: string | null;

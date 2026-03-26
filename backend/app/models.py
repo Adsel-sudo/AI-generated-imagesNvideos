@@ -23,6 +23,9 @@ class Task(SQLModel, table=True):
     prompt_final: Optional[str] = None
     model_name: Optional[str] = None
     n_outputs: int = Field(default=DEFAULT_N_OUTPUTS)
+    progress_current: int = Field(default=0)
+    progress_total: int = Field(default=DEFAULT_N_OUTPUTS)
+    progress_message: Optional[str] = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
     started_at: Optional[datetime] = None

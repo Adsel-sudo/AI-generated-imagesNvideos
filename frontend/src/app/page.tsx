@@ -588,6 +588,25 @@ export default function ImageWorkbenchPage() {
       try {
         const task = await getTaskDetail(taskId);
         const status = String(task.status || "").toLowerCase();
+        const parsedProgressCurrent = Number(task.progress_current ?? 0);
+        const progressCurrent = Number.isFinite(parsedProgressCurrent) ? Math.max(0, parsedProgressCurrent) : 0;
+        const parsedProgressTotal = Number(task.progress_total ?? task.n_outputs ?? 0);
+        const progressTotal = Number.isFinite(parsedProgressTotal)
+          ? Math.max(progressCurrent, parsedProgressTotal)
+          : progressCurrent;
+        const progressMessage =
+          typeof task.progress_message === "string" && task.progress_message.trim()
+            ? task.progress_message.trim()
+            : undefined;
+
+        if (!TERMINAL_SUCCESS.has(status) && !TERMINAL_FAILED.has(status)) {
+          updateMessageById(conversationId, messageId, (message) => ({
+            ...message,
+            progress_current: progressCurrent,
+            progress_total: progressTotal,
+            progress_message: progressMessage,
+          }));
+        }
 
         if (TERMINAL_SUCCESS.has(status)) {
           const outputs =
@@ -607,6 +626,9 @@ export default function ImageWorkbenchPage() {
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
             system_status: "done",
+            progress_current: progressTotal || progressCurrent || message.progress_total || 0,
+            progress_total: progressTotal || message.progress_total || 0,
+            progress_message: progressMessage,
             generated_outputs: outputs.length
               ? outputs
               : message.generated_outputs.map((output) => ({
@@ -627,6 +649,9 @@ export default function ImageWorkbenchPage() {
             ...message,
             system_status: "error",
             error_message: failedReason,
+            progress_current: progressCurrent || message.progress_current,
+            progress_total: progressTotal || message.progress_total,
+            progress_message: progressMessage,
             generated_outputs: message.generated_outputs.map((output) => ({
               ...output,
               status: "failed",
@@ -676,14 +701,24 @@ export default function ImageWorkbenchPage() {
       setActiveConversationId(selectedConversationId);
     }
 
+    const latestDraftFromStore =
+      (selectedConversationId && draftByConversationId[selectedConversationId]) || undefined;
+    const baseDraft = latestDraftFromStore || draft;
     const currentDraft: WorkbenchDraft = {
-      ...draft,
+      ...baseDraft,
       reserved: {
-        ...draft.reserved,
+        ...baseDraft.reserved,
         session_id: sessionId,
         conversation_id: selectedConversationId,
       },
     };
+    setDraftByConversationId((prev) => ({
+      ...prev,
+      [selectedConversationId]: currentDraft,
+    }));
+    if (selectedConversationId === activeConversationId) {
+      setDraft(currentDraft);
+    }
 
     setOptimizeError(null);
     setReferenceError(null);
@@ -720,6 +755,9 @@ export default function ImageWorkbenchPage() {
       optimized_prompt: optimizedPromptCn || currentDraft.raw_request.trim(),
       size_text: getSizeDisplayText(resolveDraftSize(currentDraft)),
       style_preference: currentDraft.style_preference.trim() || undefined,
+      progress_current: 0,
+      progress_total: 3,
+      progress_message: "生成中 0/3",
     });
 
     setConversations((prev) =>
@@ -988,6 +1026,14 @@ export default function ImageWorkbenchPage() {
                           >
                             {message.system_status === "done" ? "生成完成" : "生成中"}
                           </span>
+                          {message.system_status === "processing" && (message.progress_total || 0) > 0 ? (
+                            <span className="inline-flex rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                              {`${Math.max(0, message.progress_current || 0)}/${Math.max(
+                                0,
+                                message.progress_total || 0,
+                              )}`}
+                            </span>
+                          ) : null}
                           {message.system_status === "processing" ? (
                             <span className="inline-flex h-4 w-4 items-center justify-center text-slate-400">
                               <LoadingIcon />
