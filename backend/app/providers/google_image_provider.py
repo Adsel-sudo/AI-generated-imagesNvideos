@@ -482,7 +482,7 @@ class GoogleImageProvider(BaseProvider):
         for retry in range(max_retries):
             try:
                 return client.models.generate_content(
-                    model_name=model_name,
+                    model=model_name,
                     contents=request_contents,
                     config=config,
                 )

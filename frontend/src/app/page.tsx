@@ -200,6 +200,7 @@ export default function ImageWorkbenchPage() {
     outputs: GeneratedOutput[];
     activeIndex: number;
   } | null>(null);
+  const [openOptimizedPromptMessageId, setOpenOptimizedPromptMessageId] = useState<string | null>(null);
   const [, setOptimizeError] = useState<string | null>(null);
   const [referenceError, setReferenceError] = useState<string | null>(null);
   const [uploadingMap, setUploadingMap] = useState<Record<ReferenceCategory, boolean>>({
@@ -212,6 +213,7 @@ export default function ImageWorkbenchPage() {
   const currentMessageRef = useRef<HTMLElement | null>(null);
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
   const pollingTaskIdsRef = useRef<Set<string>>(new Set());
+  const optimizedPromptPopoverRef = useRef<HTMLDivElement | null>(null);
   const totalReferenceCount = useMemo(
     () =>
       Object.values(draft.references).reduce((sum, assets) => {
@@ -236,6 +238,34 @@ export default function ImageWorkbenchPage() {
     return previewState.outputs[previewState.activeIndex] ?? null;
   }, [previewState]);
   const previewHasMultiple = (previewState?.outputs.length || 0) > 1;
+
+  useEffect(() => {
+    if (!openOptimizedPromptMessageId) return;
+
+    const handlePointerDownOutside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!optimizedPromptPopoverRef.current?.contains(target)) {
+        setOpenOptimizedPromptMessageId(null);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenOptimizedPromptMessageId(null);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDownOutside);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDownOutside);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [openOptimizedPromptMessageId]);
+
+  useEffect(() => {
+    setOpenOptimizedPromptMessageId(null);
+  }, [activeConversationId]);
 
   const handleOpenPreview = (outputs: GeneratedOutput[], activeIndex: number) => {
     if (!outputs.length) return;
@@ -1143,7 +1173,32 @@ export default function ImageWorkbenchPage() {
                     {message.user_input}
                   </div>
 
-                  <div className="max-w-[78%] space-y-2">
+                  <div className={`relative max-w-[78%] space-y-2 ${message.optimized_prompt ? "pt-6" : ""}`}>
+                    {message.optimized_prompt ? (
+                      <div
+                        className="absolute top-0 left-0 z-20"
+                        ref={(node) => {
+                          if (openOptimizedPromptMessageId === message.id) {
+                            optimizedPromptPopoverRef.current = node;
+                          }
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-700"
+                          onClick={() =>
+                            setOpenOptimizedPromptMessageId((prev) => (prev === message.id ? null : message.id))
+                          }
+                        >
+                          查看优化后的提示词
+                        </button>
+                        {openOptimizedPromptMessageId === message.id ? (
+                          <div className="absolute top-7 left-0 w-[min(32rem,calc(100vw-7rem))] max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2.5 text-left text-xs text-slate-500 shadow-lg">
+                            {message.optimized_prompt}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {message.system_status === "error" && message.error_message ? (
                       <div className="rounded-xl border border-rose-200 bg-rose-50/70 px-2.5 py-2">
                         <div className="truncate text-xs text-rose-600">{message.error_message}</div>
@@ -1186,14 +1241,6 @@ export default function ImageWorkbenchPage() {
                             >
                               停止生成
                             </button>
-                          ) : null}
-                          {message.optimized_prompt ? (
-                            <details className="max-w-[72%] rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-right">
-                              <summary className="cursor-pointer text-xs font-medium text-slate-600">
-                                查看优化后的提示词
-                              </summary>
-                              <div className="mt-1 text-left text-xs text-slate-500">{message.optimized_prompt}</div>
-                            </details>
                           ) : null}
                         </div>
                       </div>
