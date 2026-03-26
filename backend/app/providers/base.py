@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 
 from ..enums import TaskType
 from ..models import Task
@@ -21,5 +22,9 @@ class BaseProvider(ABC):
             raise ValueError(f"[provider={self.name}][stage=validate] does not support prompt tasks")
 
     @abstractmethod
-    def generate(self, task: Task) -> list[ProviderResultItem]:
+    def generate(
+        self,
+        task: Task,
+        on_output: Callable[[ProviderResultItem], None] | None = None,
+    ) -> list[ProviderResultItem]:
         """Generate outputs for a task and return normalized output metadata."""

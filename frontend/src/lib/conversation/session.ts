@@ -5,11 +5,14 @@ import type {
   GeneratedOutput,
   SystemStatus,
 } from "@/src/types/conversation";
+import type { WorkbenchDraft } from "@/src/types/workbench";
+import { createEmptyWorkbenchDraft } from "@/src/types/workbench";
 
 export const STORAGE_KEYS = {
   sessionId: "ai_image_workbench_session_id",
   conversations: "ai_image_workbench_conversations",
   activeConversationId: "ai_image_workbench_active_conversation_id",
+  draftByConversationId: "ai_image_workbench_draft_by_conversation_id",
 } as const;
 
 export const createId = () => {
@@ -73,6 +76,39 @@ const parseConversations = (raw: string | null): Conversation[] => {
   }
 };
 
+const parseDraftByConversationId = (raw: string | null): Record<string, WorkbenchDraft> => {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, WorkbenchDraft>;
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed).map(([conversationId, draft]) => {
+        const empty = createEmptyWorkbenchDraft();
+        const references = draft?.references || empty.references;
+        return [
+          conversationId,
+          {
+            ...empty,
+            ...draft,
+            references: {
+              product: Array.isArray(references.product) ? references.product : [],
+              composition: Array.isArray(references.composition) ? references.composition : [],
+              pose: Array.isArray(references.pose) ? references.pose : [],
+              style: Array.isArray(references.style) ? references.style : [],
+            },
+            reserved: {
+              ...empty.reserved,
+              ...(draft?.reserved || {}),
+            },
+          } satisfies WorkbenchDraft,
+        ];
+      }),
+    );
+  } catch {
+    return {};
+  }
+};
+
 export const getOrCreateSessionId = (): string => {
   const existing = localStorage.getItem(STORAGE_KEYS.sessionId);
   if (existing) return existing;
@@ -85,6 +121,9 @@ export const getOrCreateSessionId = (): string => {
 export const loadConversationState = (): ConversationState => {
   const session_id = getOrCreateSessionId();
   const conversations = parseConversations(localStorage.getItem(STORAGE_KEYS.conversations));
+  const draft_by_conversation_id = parseDraftByConversationId(
+    localStorage.getItem(STORAGE_KEYS.draftByConversationId),
+  );
 
   if (!conversations.length) {
     const first = createConversation();
@@ -92,6 +131,7 @@ export const loadConversationState = (): ConversationState => {
       session_id,
       active_conversation_id: first.conversation_id,
       conversations: [first],
+      draft_by_conversation_id,
     };
   }
 
@@ -102,6 +142,7 @@ export const loadConversationState = (): ConversationState => {
     session_id,
     active_conversation_id: matched ? matched.conversation_id : conversations[0].conversation_id,
     conversations,
+    draft_by_conversation_id,
   };
 };
 
@@ -109,8 +150,13 @@ export const persistConversationState = (params: {
   session_id: string;
   active_conversation_id: string;
   conversations: Conversation[];
+  draft_by_conversation_id: Record<string, WorkbenchDraft>;
 }) => {
   localStorage.setItem(STORAGE_KEYS.sessionId, params.session_id);
   localStorage.setItem(STORAGE_KEYS.activeConversationId, params.active_conversation_id);
   localStorage.setItem(STORAGE_KEYS.conversations, JSON.stringify(params.conversations));
+  localStorage.setItem(
+    STORAGE_KEYS.draftByConversationId,
+    JSON.stringify(params.draft_by_conversation_id),
+  );
 };

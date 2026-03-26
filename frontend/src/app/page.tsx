@@ -2,6 +2,7 @@
 
 import { type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import { getApiBaseUrl } from "@/src/lib/api/client";
 import {
   generateImageTask,
   getOutputDownloadUrl,
@@ -46,7 +47,8 @@ const REFERENCE_GROUPS: Array<{ label: string; key: ReferenceCategory; limit: nu
   { label: "风格参考图", key: "style", limit: REFERENCE_LIMITS.style },
 ];
 const POLL_INTERVAL_MS = 2000;
-const POLL_MAX_ATTEMPTS = 30;
+const POLL_STALL_THRESHOLD_MS = 90000;
+const POLL_STALL_NOTICE = "处理时间较长，请稍后在当前对话中继续查看（任务仍在进行）";
 const PANEL_SECTION_SPACING = "py-3";
 const OPTIONAL_BADGE_CLASS =
   "inline-flex items-center rounded-full border border-violet-200/70 bg-violet-50/70 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-500";
@@ -90,6 +92,50 @@ const sleep = (ms: number) =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+
+const mapTaskOutputsToGeneratedOutputs = (taskId: string, outputs?: Array<{ id: string; file_path?: string | null; file_name?: string | null }>) =>
+  outputs?.map((output) => {
+    const downloadUrl = getOutputDownloadUrl(taskId, output.id);
+    return {
+      id: output.id,
+      kind: "image" as const,
+      url: downloadUrl,
+      downloadUrl,
+      file_path: output.file_path || undefined,
+      file_name: output.file_name || undefined,
+      status: "ready" as const,
+    };
+  }) ?? [];
+
+const resolveStablePreviewUrl = (params: {
+  fileId?: string;
+  filePath?: string;
+  backendUrl?: string;
+  fallbackObjectUrl?: string;
+}) => {
+  if (params.backendUrl) {
+    if (/^https?:\/\//i.test(params.backendUrl)) {
+      return params.backendUrl;
+    }
+    return `${getApiBaseUrl()}${params.backendUrl.startsWith("/") ? "" : "/"}${params.backendUrl}`;
+  }
+
+  if (params.fileId) {
+    return `${getApiBaseUrl()}/api/files/${params.fileId}`;
+  }
+
+  if (params.filePath) {
+    const normalized = params.filePath.replace(/\\/g, "/");
+    const filename = normalized.split("/").pop() || "";
+    const extIndex = filename.lastIndexOf(".");
+    const fileIdFromPath = extIndex > 0 ? filename.slice(0, extIndex) : filename;
+    if (fileIdFromPath) {
+      return `${getApiBaseUrl()}/api/files/${fileIdFromPath}`;
+    }
+  }
+
+  return params.fallbackObjectUrl || "";
+};
 
 function SendIcon({ disabled }: { disabled: boolean }) {
   return (
@@ -160,6 +206,7 @@ export default function ImageWorkbenchPage() {
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
   const currentMessageRef = useRef<HTMLElement | null>(null);
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const pollingTaskIdsRef = useRef<Set<string>>(new Set());
   const totalReferenceCount = useMemo(
     () =>
       Object.values(draft.references).reduce((sum, assets) => {
@@ -266,6 +313,12 @@ export default function ImageWorkbenchPage() {
     setSessionId(state.session_id);
     setConversations(state.conversations);
     setActiveConversationId(state.active_conversation_id);
+    setDraftByConversationId(state.draft_by_conversation_id);
+
+    const initialDraft =
+      (state.active_conversation_id && state.draft_by_conversation_id[state.active_conversation_id]) ||
+      createEmptyWorkbenchDraft();
+    setDraft(initialDraft);
   }, []);
 
   useEffect(() => {
@@ -274,8 +327,9 @@ export default function ImageWorkbenchPage() {
       session_id: sessionId,
       active_conversation_id: activeConversationId,
       conversations,
+      draft_by_conversation_id: draftByConversationId,
     });
-  }, [activeConversationId, conversations, sessionId]);
+  }, [activeConversationId, conversations, draftByConversationId, sessionId]);
 
   useEffect(() => {
     if (!activeConversationId) return;
@@ -469,7 +523,12 @@ export default function ImageWorkbenchPage() {
             file_path: uploaded.file_path || "",
             file_name: uploaded.file_name || file.name,
             mime_type: uploaded.mime_type || file.type,
-            preview_url: URL.createObjectURL(file),
+            preview_url: resolveStablePreviewUrl({
+              fileId: uploaded.file_id,
+              filePath: uploaded.file_path,
+              backendUrl: uploaded.url,
+              fallbackObjectUrl: URL.createObjectURL(file),
+            }),
           };
         }),
       );
@@ -556,7 +615,7 @@ export default function ImageWorkbenchPage() {
     });
   };
 
-  const updateMessageById = (
+  const updateMessageById = useCallback((
     conversationId: string,
     messageId: string,
     updater: (message: Conversation["messages"][number]) => Conversation["messages"][number],
@@ -573,9 +632,9 @@ export default function ImageWorkbenchPage() {
         };
       }),
     );
-  };
+  }, []);
 
-  const pollTaskAndSyncMessage = async ({
+  const pollTaskAndSyncMessage = useCallback(async ({
     conversationId,
     messageId,
     taskId,
@@ -584,7 +643,13 @@ export default function ImageWorkbenchPage() {
     messageId: string;
     taskId: string;
   }) => {
-    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+    let lastProgressCurrent = 0;
+    let lastOutputCount = 0;
+    let lastStatus = "";
+    let lastActivityAt = Date.now();
+    let stallNotified = false;
+
+    while (true) {
       try {
         const task = await getTaskDetail(taskId);
         const status = String(task.status || "").toLowerCase();
@@ -599,30 +664,43 @@ export default function ImageWorkbenchPage() {
             ? task.progress_message.trim()
             : undefined;
 
+        const outputs = mapTaskOutputsToGeneratedOutputs(taskId, task.outputs);
+        const outputCount = outputs.length;
+        const hasActivity =
+          progressCurrent > lastProgressCurrent ||
+          outputCount > lastOutputCount ||
+          (status !== lastStatus && !TERMINAL_SUCCESS.has(status) && !TERMINAL_FAILED.has(status));
+
+        if (hasActivity) {
+          lastActivityAt = Date.now();
+          stallNotified = false;
+        }
+        lastProgressCurrent = Math.max(lastProgressCurrent, progressCurrent);
+        lastOutputCount = Math.max(lastOutputCount, outputCount);
+        lastStatus = status;
+
         if (!TERMINAL_SUCCESS.has(status) && !TERMINAL_FAILED.has(status)) {
+          const idleDuration = Date.now() - lastActivityAt;
+          const isStalled = idleDuration >= POLL_STALL_THRESHOLD_MS;
+          if (isStalled) {
+            stallNotified = true;
+          }
+
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
             progress_current: progressCurrent,
             progress_total: progressTotal,
-            progress_message: progressMessage,
+            progress_message: isStalled
+              ? POLL_STALL_NOTICE
+              : progressMessage || (stallNotified ? POLL_STALL_NOTICE : message.progress_message),
+            generated_outputs: outputs.length ? outputs : message.generated_outputs,
           }));
+
+          await sleep(POLL_INTERVAL_MS);
+          continue;
         }
 
         if (TERMINAL_SUCCESS.has(status)) {
-          const outputs =
-            task.outputs?.map((output) => {
-              const downloadUrl = getOutputDownloadUrl(taskId, output.id);
-              return {
-                id: output.id,
-                kind: "image" as const,
-                url: downloadUrl,
-                downloadUrl,
-                file_path: output.file_path || undefined,
-                file_name: output.file_name || undefined,
-                status: "ready" as const,
-              };
-            }) ?? [];
-
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
             system_status: "done",
@@ -671,20 +749,31 @@ export default function ImageWorkbenchPage() {
         }));
         return;
       }
-
-      await sleep(POLL_INTERVAL_MS);
     }
+  }, [updateMessageById]);
 
-    updateMessageById(conversationId, messageId, (message) => ({
-      ...message,
-      system_status: "error",
-      error_message: getFriendlyErrorMessage("timeout"),
-      generated_outputs: message.generated_outputs.map((output) => ({
-        ...output,
-        status: "failed",
-      })),
-    }));
-  };
+  const startPollingTask = useCallback((params: { conversationId: string; messageId: string; taskId: string }) => {
+    if (pollingTaskIdsRef.current.has(params.taskId)) {
+      return;
+    }
+    pollingTaskIdsRef.current.add(params.taskId);
+    void pollTaskAndSyncMessage(params).finally(() => {
+      pollingTaskIdsRef.current.delete(params.taskId);
+    });
+  }, [pollTaskAndSyncMessage]);
+
+  useEffect(() => {
+    for (const conversation of conversations) {
+      for (const message of conversation.messages) {
+        if (message.system_status !== "processing" || !message.task_id) continue;
+        startPollingTask({
+          conversationId: conversation.conversation_id,
+          messageId: message.id,
+          taskId: message.task_id,
+        });
+      }
+    }
+  }, [conversations, startPollingTask]);
 
   const handleSubmitTask = async () => {
     if (!draft.raw_request.trim()) {
@@ -798,7 +887,7 @@ export default function ImageWorkbenchPage() {
         task_id: taskId,
       }));
 
-      void pollTaskAndSyncMessage({
+      startPollingTask({
         conversationId: selectedConversationId,
         messageId: message.id,
         taskId,
@@ -1050,6 +1139,9 @@ export default function ImageWorkbenchPage() {
                         ) : null}
                       </div>
                     )}
+                    {message.system_status === "processing" && message.progress_message ? (
+                      <div className="text-xs text-slate-500">{message.progress_message}</div>
+                    ) : null}
 
                     {message.system_status === "processing" && message.generated_outputs.length === 0 ? (
                       <div className="rounded-xl border border-slate-200/80 bg-white/75 p-2">

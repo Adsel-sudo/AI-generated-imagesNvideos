@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from ..config import settings
 from ..models import Task
 from ..provider_params import normalize_task_params
@@ -14,8 +16,13 @@ class PromptOptimizerProvider(BaseProvider):
     name = "prompt_optimizer"
     supports_prompt = True
 
-    def generate(self, task: Task) -> list[ProviderResultItem]:
+    def generate(
+        self,
+        task: Task,
+        on_output: Callable[[ProviderResultItem], None] | None = None,
+    ) -> list[ProviderResultItem]:
         params = normalize_task_params(task)
+        _ = on_output
         style = params.style or "balanced"
 
         source_text = (task.request_text or "").strip()
