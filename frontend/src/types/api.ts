@@ -10,7 +10,7 @@ export type TaskStatus =
   | "cancelled"
   | string;
 
-export type TaskType = "image" | "video" | "prompt" | string;
+export type TaskType = "image" | "prompt" | string;
 
 export interface OutputItem {
   id: string;
