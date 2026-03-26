@@ -1,4 +1,5 @@
 import random
+from collections.abc import Callable
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -26,7 +27,11 @@ class MockProvider(BaseProvider):
     supports_image = True
     supports_video = False
 
-    def generate(self, task: Task) -> list[ProviderResultItem]:
+    def generate(
+        self,
+        task: Task,
+        on_output: Callable[[ProviderResultItem], None] | None = None,
+    ) -> list[ProviderResultItem]:
         params = normalize_task_params(task)
 
         out_dir = settings.outputs_dir / task.id
@@ -44,17 +49,18 @@ class MockProvider(BaseProvider):
                 label = f"{label}\nparams={params.model_dump(exclude_none=True)}"
             _make_fake_png(output_path, label, width, height)
 
-            outputs.append(
-                ProviderResultItem(
-                    index=index,
-                    file_path=str(output_path),
-                    mime_type="image/png",
-                    file_type="image",
-                    file_name=output_path.name,
-                    file_size=output_path.stat().st_size,
-                    width=width,
-                    height=height,
-                )
+            output_item = ProviderResultItem(
+                index=index,
+                file_path=str(output_path),
+                mime_type="image/png",
+                file_type="image",
+                file_name=output_path.name,
+                file_size=output_path.stat().st_size,
+                width=width,
+                height=height,
             )
+            outputs.append(output_item)
+            if on_output:
+                on_output(output_item)
 
         return outputs

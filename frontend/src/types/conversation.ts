@@ -1,3 +1,5 @@
+import type { WorkbenchDraft } from "@/src/types/workbench";
+
 export type SystemStatus = "processing" | "done" | "error";
 
 export type GeneratedOutput = {
@@ -38,4 +40,5 @@ export type ConversationState = {
   session_id: string;
   active_conversation_id: string;
   conversations: Conversation[];
+  draft_by_conversation_id: Record<string, WorkbenchDraft>;
 };

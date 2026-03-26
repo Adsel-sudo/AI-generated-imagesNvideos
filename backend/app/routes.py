@@ -54,7 +54,20 @@ def upload_file(file: UploadFile = File(...)):
         file_path=str(save_path),
         mime_type=mime_type,
         file_size=save_path.stat().st_size,
+        url=f"/api/files/{file_id}",
     )
+
+
+@router.get("/api/files/{file_id}")
+def get_uploaded_file(file_id: str):
+    upload_dir = settings.uploads_dir
+    matches = sorted(upload_dir.glob(f"{file_id}.*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="file not found")
+
+    file_path = matches[0]
+    mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    return FileResponse(path=file_path, media_type=mime_type, filename=file_path.name)
 
 
 @router.post("/api/prompt/optimize", response_model=PromptOptimizeResponse)

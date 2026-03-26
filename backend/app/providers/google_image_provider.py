@@ -5,6 +5,7 @@ import logging
 import math
 import mimetypes
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -409,7 +410,11 @@ class GoogleImageProvider(BaseProvider):
 
         return mime_type, False
 
-    def generate(self, task: Task) -> list[ProviderResultItem]:
+    def generate(
+        self,
+        task: Task,
+        on_output: Callable[[ProviderResultItem], None] | None = None,
+    ) -> list[ProviderResultItem]:
         if genai is None:
             raise RuntimeError(
                 f"[provider={self.name}][stage=import] google-genai is not installed or failed to import"
@@ -523,18 +528,19 @@ class GoogleImageProvider(BaseProvider):
                                 pass
                             continue
 
-                results.append(
-                    ProviderResultItem(
-                        index=index,
-                        file_path=str(file_path),
-                        mime_type=mime_type,
-                        file_type="image",
-                        file_name=file_name,
-                        file_size=file_path.stat().st_size,
-                        width=width,
-                        height=height,
-                    )
+                output_item = ProviderResultItem(
+                    index=index,
+                    file_path=str(file_path),
+                    mime_type=mime_type,
+                    file_type="image",
+                    file_name=file_name,
+                    file_size=file_path.stat().st_size,
+                    width=width,
+                    height=height,
                 )
+                results.append(output_item)
+                if on_output:
+                    on_output(output_item)
 
         if not results:
             raise RuntimeError(

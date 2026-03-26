@@ -116,3 +116,4 @@ class FileUploadResponse(BaseModel):
     file_path: str
     mime_type: str
     file_size: int
+    url: Optional[str] = None

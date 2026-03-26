@@ -150,6 +150,38 @@ def generate_task(task_id: str):
             )
             all_outputs = []
             main_prompt = None
+            next_index = 1
+            if task_type in {TaskType.IMAGE.value, TaskType.VIDEO.value}:
+                existing_outputs = session.exec(select(Output).where(Output.task_id == task_id)).all()
+                if existing_outputs:
+                    next_index = max(item.index for item in existing_outputs) + 1
+
+            def persist_output(target_type: str | None, item) -> None:
+                nonlocal next_index
+                if task_type not in {TaskType.IMAGE.value, TaskType.VIDEO.value}:
+                    return
+                output = Output(
+                    task_id=task_id,
+                    index=next_index,
+                    file_path=item.file_path,
+                    mime_type=item.mime_type,
+                    file_type=item.file_type,
+                    file_name=item.file_name,
+                    file_size=item.file_size,
+                    width=item.width,
+                    height=item.height,
+                    duration_seconds=item.duration_seconds,
+                    checksum=item.checksum,
+                    target_type=target_type,
+                )
+                next_index += 1
+                session.add(output)
+                task.progress_current = min(task.n_outputs, task.progress_current + 1)
+                task.progress_total = task.n_outputs
+                task.progress_message = f"生成中 {task.progress_current}/{task.progress_total}"
+                task.updated_at = utcnow()
+                session.add(task)
+                session.commit()
 
             for target_type, target_task in targets:
                 logger.info(
@@ -159,7 +191,10 @@ def generate_task(task_id: str):
                     target_type or "default",
                     target_task.n_outputs,
                 )
-                generated_outputs = provider.generate(target_task)
+                generated_outputs = provider.generate(
+                    target_task,
+                    on_output=lambda item, current_target=target_type: persist_output(current_target, item),
+                )
                 if main_prompt is None:
                     main_prompt = target_task.prompt_final
 
@@ -169,38 +204,7 @@ def generate_task(task_id: str):
             task.prompt_final = main_prompt or task.prompt_final
             task.model_name = task.model_name or getattr(targets[0][1], "model_name", None)
 
-            _update_task_status(session, task, status=TaskStatus.SAVING, progress_message=f"保存结果 0/{task.n_outputs}")
-
-            if task_type in {TaskType.IMAGE.value, TaskType.VIDEO.value}:
-                next_index = 1
-                existing_count = session.exec(select(Output).where(Output.task_id == task_id)).all()
-                if existing_count:
-                    next_index = max(item.index for item in existing_count) + 1
-
-                for target_type, item in all_outputs:
-                    output = Output(
-                        task_id=task_id,
-                        index=next_index,
-                        file_path=item.file_path,
-                        mime_type=item.mime_type,
-                        file_type=item.file_type,
-                        file_name=item.file_name,
-                        file_size=item.file_size,
-                        width=item.width,
-                        height=item.height,
-                        duration_seconds=item.duration_seconds,
-                        checksum=item.checksum,
-                        target_type=target_type,
-                    )
-                    next_index += 1
-                    session.add(output)
-                    task.progress_current = min(task.n_outputs, task.progress_current + 1)
-                    task.progress_total = task.n_outputs
-                    task.progress_message = f"生成中 {task.progress_current}/{task.progress_total}"
-                    task.updated_at = utcnow()
-                    session.add(task)
-                    session.commit()
-            elif task_type == TaskType.PROMPT.value:
+            if task_type == TaskType.PROMPT.value:
                 pass
 
             task.progress_current = max(task.progress_current, len(all_outputs))
