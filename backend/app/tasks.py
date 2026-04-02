@@ -143,9 +143,10 @@ def generate_task(task_id: str):
             task_type = (task.type or "").strip().lower()
             targets = _build_target_tasks(task)
             logger.info(
-                "[task=%s][stage=targets] count=%s params=%s",
+                "[task=%s][stage=targets] count=%s resolution=%s params=%s",
                 task_id,
                 len(targets),
+                _load_params_json(task).get("resolution"),
                 _load_params_json(task),
             )
             all_outputs = []
@@ -204,11 +205,12 @@ def generate_task(task_id: str):
                     return
 
                 logger.info(
-                    "[task=%s][stage=provider_generate] provider=%s target=%s n_outputs=%s",
+                    "[task=%s][stage=provider_generate] provider=%s target=%s n_outputs=%s resolution=%s",
                     task_id,
                     provider.name,
                     target_type or "default",
                     target_task.n_outputs,
+                    _load_params_json(target_task).get("resolution"),
                 )
                 generated_outputs = provider.generate(
                     target_task,
