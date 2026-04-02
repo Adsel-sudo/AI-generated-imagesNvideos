@@ -16,12 +16,15 @@ export type UploadedReferenceAsset = {
   preview_url: string;
 };
 
+export type ResolutionOption = "2K" | "4K";
+
 export type WorkbenchDraft = {
   raw_request: string;
   references: ReferenceBuckets;
   sizeMode: "preset" | "custom";
   presetSize: string;
   customAspectRatio: string;
+  resolution: ResolutionOption;
   style_preference: string;
   preserve_product_fidelity: boolean;
   reserved: {
@@ -42,6 +45,7 @@ export const createEmptyWorkbenchDraft = (): WorkbenchDraft => ({
   sizeMode: "preset",
   presetSize: "1:1",
   customAspectRatio: "",
+  resolution: "2K",
   style_preference: "",
   preserve_product_fidelity: false,
   reserved: {},

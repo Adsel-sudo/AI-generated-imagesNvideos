@@ -27,6 +27,7 @@ import type { Conversation } from "@/src/types/conversation";
 import {
   createEmptyWorkbenchDraft,
   type ReferenceCategory,
+  type ResolutionOption,
   type WorkbenchDraft,
 } from "@/src/types/workbench";
 import type { GeneratedOutput } from "@/src/types/conversation";
@@ -34,6 +35,7 @@ import type { GeneratedOutput } from "@/src/types/conversation";
 type SizeOption = "1:1" | "16:9" | "4:3" | "3:2" | "other";
 
 const PRESET_SIZES = ["1:1", "16:9", "4:3", "3:2"] as const;
+const RESOLUTION_OPTIONS: ResolutionOption[] = ["2K", "4K"];
 const REFERENCE_LIMITS: Record<ReferenceCategory, number> = {
   product: 3,
   composition: 2,
@@ -233,6 +235,10 @@ export default function ImageWorkbenchPage() {
   }, [draft.presetSize, draft.sizeMode]);
 
   const customSizeReady = ASPECT_RATIO_PATTERN.test(draft.customAspectRatio);
+  const selectedResolution: ResolutionOption = useMemo(
+    () => (RESOLUTION_OPTIONS.includes(draft.resolution) ? draft.resolution : "2K"),
+    [draft.resolution],
+  );
   const previewOutput = useMemo(() => {
     if (!previewState) return null;
     return previewState.outputs[previewState.activeIndex] ?? null;
@@ -1057,6 +1063,37 @@ export default function ImageWorkbenchPage() {
                 ) : null}
                 <div className="mt-2 text-xs text-slate-500">
                   实际输出分辨率由模型决定，系统将尽量匹配所选比例
+                </div>
+              </div>
+
+              <div className={PANEL_SECTION_SPACING}>
+                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+                  <span>分辨率</span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {RESOLUTION_OPTIONS.map((option) => {
+                    const selected = selectedResolution === option;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() =>
+                          setActiveDraft((prev) => ({
+                            ...prev,
+                            resolution: option,
+                          }))
+                        }
+                        className={`rounded-lg border px-2.5 py-2 text-sm font-medium transition ${
+                          selected
+                            ? "border-violet-300 bg-violet-50 text-violet-700"
+                            : "border-slate-200 bg-slate-100/70 text-slate-700 hover:border-violet-200 hover:text-violet-600"
+                        }`}
+                        aria-pressed={selected}
+                      >
+                        {option}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

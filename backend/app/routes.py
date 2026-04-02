@@ -106,13 +106,16 @@ def optimize_prompt(payload: PromptOptimizeRequest):
 @router.post("/api/prompt/generate-task")
 def generate_task_from_prompt(payload: PromptGenerateTaskRequest):
     params = dict(payload.params)
+    usage_options = dict(payload.usage_options)
+    usage_options["resolution"] = payload.resolution
     params.update(
         {
             "optimized_prompt_cn": payload.optimized_prompt_cn,
             "structured_summary": payload.structured_summary,
+            "resolution": payload.resolution,
             "references": [item.model_dump() for item in payload.references],
             "generation_targets": [item.model_dump() for item in payload.generation_targets],
-            "usage_options": payload.usage_options,
+            "usage_options": usage_options,
             "confirm_notes": payload.confirm_notes,
         }
     )
@@ -159,10 +162,12 @@ def generate_task_from_prompt(payload: PromptGenerateTaskRequest):
 @router.post("/api/tasks")
 def create_task(payload: CreateTaskRequest):
     with Session(engine) as session:
+        params = dict(payload.params)
+        params["resolution"] = payload.resolution
         task = Task(
             type=payload.type,
             provider=payload.provider or DEFAULT_PROVIDER,
-            params_json=json.dumps(payload.params, ensure_ascii=False),
+            params_json=json.dumps(params, ensure_ascii=False),
             request_text=payload.request_text,
             n_outputs=payload.n_outputs,
             progress_current=0,

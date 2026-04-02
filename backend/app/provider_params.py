@@ -14,6 +14,7 @@ STANDARD_PARAM_KEYS = {
     "negative_prompt",
     "duration_seconds",
     "fps",
+    "resolution",
     "extra",
 }
 
@@ -38,6 +39,8 @@ def normalize_task_params(task: Task) -> StandardTaskParams:
         base["size"] = usage_options.get("size")
     if base.get("style") is None and isinstance(usage_options.get("style_preference"), str):
         base["style"] = usage_options.get("style_preference")
+    if base.get("resolution") is None and isinstance(usage_options.get("resolution"), str):
+        base["resolution"] = usage_options.get("resolution")
 
     # Allow width/height derived from `size` forms like "1024x1024".
     size = raw.get("size")

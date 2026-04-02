@@ -1,4 +1,9 @@
-import type { GenerateTaskRequestPayload, OptimizeRequestPayload, UploadedReferenceFile } from "@/src/types/image";
+import type {
+  GenerateTaskRequestPayload,
+  OptimizeRequestPayload,
+  UploadedReferenceFile,
+  UsageOptions,
+} from "@/src/types/image";
 import type { GenerationTarget } from "@/src/types/api";
 import type { UploadedReferenceAsset, WorkbenchDraft } from "@/src/types/workbench";
 
@@ -42,11 +47,12 @@ const parseSizeToTarget = (size: string): GenerationTarget => {
   };
 };
 
-const buildUsageOptions = (draft: WorkbenchDraft) => ({
+const buildUsageOptions = (draft: WorkbenchDraft): UsageOptions => ({
   size: resolveDraftSize(draft),
   style_preference: draft.style_preference,
   preserve_product_fidelity: draft.preserve_product_fidelity,
   implicit_prompt_plan: draft.reserved.implicit_prompt_plan,
+  resolution: draft.resolution,
 });
 
 type BuildPayloadParams = {
@@ -75,6 +81,7 @@ export const buildGeneratePayload = ({
   optimized_prompt_cn,
   generation_prompt,
   structured_summary,
+  resolution: draft.resolution,
   n_outputs: DEFAULT_N_OUTPUTS,
   references: mapReferencesToPayload(draft),
   generation_targets: [parseSizeToTarget(resolveDraftSize(draft))],

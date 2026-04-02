@@ -145,6 +145,13 @@ class GoogleImageProvider(BaseProvider):
             return f"{width // ratio_gcd}:{height // ratio_gcd}"
         return None
 
+    def _normalize_resolution(self, raw: Any) -> str:
+        if isinstance(raw, str):
+            normalized = raw.strip().upper()
+            if normalized in {"2K", "4K"}:
+                return normalized
+        return "2K"
+
     def _build_config(self, task: Task) -> Any:
         if genai_types is None:
             return {}
@@ -162,11 +169,20 @@ class GoogleImageProvider(BaseProvider):
         if not aspect_ratio:
             aspect_ratio = self._normalize_aspect_ratio(params.size)
 
+        image_size = self._normalize_resolution(params.resolution)
+        image_config_kwargs: dict[str, Any] = {"image_size": image_size}
         if aspect_ratio:
-            image_config = genai_types.ImageConfig(aspect_ratio=aspect_ratio)
-            return genai_types.GenerateContentConfig(image_config=image_config)
+            image_config_kwargs["aspect_ratio"] = aspect_ratio
 
-        return genai_types.GenerateContentConfig()
+        image_config = genai_types.ImageConfig(**image_config_kwargs)
+        logger.info(
+            "[provider=%s][stage=config] task_id=%s aspect_ratio=%s image_size=%s",
+            self.name,
+            task.id,
+            aspect_ratio,
+            image_size,
+        )
+        return genai_types.GenerateContentConfig(image_config=image_config)
 
     def _resolve_reference_path(self, raw_path: str) -> Path:
         path = Path(raw_path)

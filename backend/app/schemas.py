@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .constants import DEFAULT_N_OUTPUTS, DEFAULT_PROVIDER, DEFAULT_TASK_TYPE
 
@@ -17,7 +17,17 @@ class StandardTaskParams(BaseModel):
     negative_prompt: Optional[str] = None
     duration_seconds: Optional[float] = None
     fps: Optional[int] = None
+    resolution: Literal["2K", "4K"] = "2K"
     extra: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("resolution", mode="before")
+    @classmethod
+    def _normalize_resolution(cls, value: Any) -> Literal["2K", "4K"]:
+        if isinstance(value, str):
+            normalized = value.strip().upper()
+            if normalized in {"2K", "4K"}:
+                return normalized  # type: ignore[return-value]
+        return "2K"
 
 
 class CreateTaskRequest(BaseModel):
@@ -27,6 +37,16 @@ class CreateTaskRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     request_text: str
     n_outputs: int = Field(default=DEFAULT_N_OUTPUTS, ge=1, le=12)
+    resolution: Literal["2K", "4K"] = Field(default="2K")
+
+    @field_validator("resolution", mode="before")
+    @classmethod
+    def _normalize_create_resolution(cls, value: Any) -> Literal["2K", "4K"]:
+        if isinstance(value, str):
+            normalized = value.strip().upper()
+            if normalized in {"2K", "4K"}:
+                return normalized  # type: ignore[return-value]
+        return "2K"
 
 
 class OutputResponse(BaseModel):
@@ -102,12 +122,22 @@ class PromptGenerateTaskRequest(BaseModel):
     optimized_prompt_cn: str
     generation_prompt: str
     structured_summary: dict[str, Any] = Field(default_factory=dict)
+    resolution: Literal["2K", "4K"] = Field(default="2K")
     references: list[ReferenceInput] = Field(default_factory=list)
     generation_targets: list[GenerationTargetInput] = Field(default_factory=list)
     usage_options: dict[str, Any] = Field(default_factory=dict)
     confirm_notes: Optional[str] = None
     params: dict[str, Any] = Field(default_factory=dict)
     n_outputs: int = Field(default=DEFAULT_N_OUTPUTS, ge=1, le=12)
+
+    @field_validator("resolution", mode="before")
+    @classmethod
+    def _normalize_prompt_resolution(cls, value: Any) -> Literal["2K", "4K"]:
+        if isinstance(value, str):
+            normalized = value.strip().upper()
+            if normalized in {"2K", "4K"}:
+                return normalized  # type: ignore[return-value]
+        return "2K"
 
 
 class FileUploadResponse(BaseModel):
