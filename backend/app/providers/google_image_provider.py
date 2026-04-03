@@ -550,6 +550,7 @@ class GoogleImageProvider(BaseProvider):
         results: list[ProviderResultItem] = []
         max_attempts = max(1, task.n_outputs * settings.google_image_max_attempts_multiplier)
         last_error_detail: str | None = None
+        request_contents = self._build_multimodal_contents(task, prompt_text)
         for attempt in range(max_attempts):
             if len(results) >= task.n_outputs:
                 break
@@ -575,7 +576,6 @@ class GoogleImageProvider(BaseProvider):
                 task.n_outputs,
                 len(results),
             )
-            request_contents = self._build_multimodal_contents(task, prompt_text)
             try:
                 response = self._generate_content_with_retry(
                     client=client,
@@ -652,35 +652,6 @@ class GoogleImageProvider(BaseProvider):
                         width, height = image.size
                 except Exception:  # noqa: BLE001
                     pass
-
-                if settings.google_image_collage_guard_enabled:
-                    try:
-                        is_collage, collage_metrics = self._detect_collage_layout(file_path, task.n_outputs)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning(
-                            "[provider=%s][stage=collage_guard] detect_failed file=%s err=%s",
-                            self.name,
-                            file_path,
-                            exc,
-                        )
-                        is_collage = False
-                        collage_metrics = {"detect_error": str(exc)}
-
-                    if is_collage:
-                        logger.warning(
-                            "[provider=%s][stage=collage_guard] detected_collage=%s retry_on_collage=%s file=%s metrics=%s",
-                            self.name,
-                            is_collage,
-                            settings.google_image_retry_on_collage,
-                            file_path,
-                            collage_metrics,
-                        )
-                        if settings.google_image_retry_on_collage:
-                            try:
-                                file_path.unlink(missing_ok=True)
-                            except Exception:  # noqa: BLE001
-                                pass
-                            continue
 
                 output_item = ProviderResultItem(
                     index=index,

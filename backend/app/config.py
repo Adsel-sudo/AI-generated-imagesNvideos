@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         validation_alias="GOOGLE_IMAGE_RETRY_ON_COLLAGE",
     )
     google_image_max_attempts_multiplier: int = Field(
-        default=3,
+        default=2,
         ge=1,
         le=8,
         validation_alias="GOOGLE_IMAGE_MAX_ATTEMPTS_MULTIPLIER",

@@ -8,7 +8,7 @@ import type { GenerationTarget } from "@/src/types/api";
 import type { UploadedReferenceAsset, WorkbenchDraft } from "@/src/types/workbench";
 
 const DEFAULT_TASK_TYPE = "image";
-const DEFAULT_N_OUTPUTS = 3;
+const DEFAULT_N_OUTPUTS = 2;
 
 const mapReferenceItems = (items: UploadedReferenceAsset[], role: string): UploadedReferenceFile[] =>
   items

@@ -924,8 +924,8 @@ export default function ImageWorkbenchPage() {
       size_text: getSizeDisplayText(resolveDraftSize(currentDraft)),
       style_preference: currentDraft.style_preference.trim() || undefined,
       progress_current: 0,
-      progress_total: 3,
-      progress_message: "生成中 0/3",
+      progress_total: 2,
+      progress_message: "生成中 0/2",
     });
 
     setConversations((prev) =>
