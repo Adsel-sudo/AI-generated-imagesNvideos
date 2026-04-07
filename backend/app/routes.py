@@ -5,11 +5,12 @@ import zipfile
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlmodel import Session, desc, select
 
 from .constants import DEFAULT_PROVIDER
+from .auth import require_login
 from .config import settings
 from .celery_app import celery_app
 from .db import engine
@@ -36,7 +37,7 @@ def health():
 
 
 @router.post("/api/files", response_model=FileUploadResponse)
-def upload_file(file: UploadFile = File(...)):
+def upload_file(file: UploadFile = File(...), _=Depends(require_login)):
     file_id = str(uuid4())
     suffix = Path(file.filename or "").suffix or ".bin"
     safe_name = Path(file.filename or f"{file_id}{suffix}").name
@@ -60,7 +61,7 @@ def upload_file(file: UploadFile = File(...)):
 
 
 @router.get("/api/files/{file_id}")
-def get_uploaded_file(file_id: str):
+def get_uploaded_file(file_id: str, _=Depends(require_login)):
     upload_dir = settings.uploads_dir
     matches = sorted(upload_dir.glob(f"{file_id}.*"))
     if not matches:
@@ -72,7 +73,7 @@ def get_uploaded_file(file_id: str):
 
 
 @router.post("/api/prompt/optimize", response_model=PromptOptimizeResponse)
-def optimize_prompt(payload: PromptOptimizeRequest):
+def optimize_prompt(payload: PromptOptimizeRequest, _=Depends(require_login)):
     references = [item.model_dump() for item in payload.references]
     generation_targets = [item.model_dump() for item in payload.generation_targets]
     logger.info(
@@ -104,7 +105,7 @@ def optimize_prompt(payload: PromptOptimizeRequest):
 
 
 @router.post("/api/prompt/generate-task")
-def generate_task_from_prompt(payload: PromptGenerateTaskRequest):
+def generate_task_from_prompt(payload: PromptGenerateTaskRequest, _=Depends(require_login)):
     params = dict(payload.params)
     usage_options = dict(payload.usage_options)
     usage_options["resolution"] = payload.resolution
@@ -160,7 +161,7 @@ def generate_task_from_prompt(payload: PromptGenerateTaskRequest):
 
 
 @router.post("/api/tasks")
-def create_task(payload: CreateTaskRequest):
+def create_task(payload: CreateTaskRequest, _=Depends(require_login)):
     with Session(engine) as session:
         params = dict(payload.params)
         params["resolution"] = payload.resolution
@@ -190,14 +191,14 @@ def create_task(payload: CreateTaskRequest):
 
 
 @router.get("/api/tasks")
-def list_tasks():
+def list_tasks(_=Depends(require_login)):
     with Session(engine) as session:
         tasks = session.exec(select(Task).order_by(desc(Task.created_at))).all()
         return tasks
 
 
 @router.get("/api/tasks/{task_id}")
-def get_task(task_id: str):
+def get_task(task_id: str, _=Depends(require_login)):
     with Session(engine) as session:
         task = session.get(Task, task_id)
         if not task:
@@ -219,7 +220,7 @@ def get_task(task_id: str):
 
 
 @router.post("/api/tasks/{task_id}/cancel")
-def cancel_task(task_id: str):
+def cancel_task(task_id: str, _=Depends(require_login)):
     with Session(engine) as session:
         task = session.get(Task, task_id)
         if not task:
@@ -251,7 +252,7 @@ def cancel_task(task_id: str):
 
 
 @router.get("/api/tasks/{task_id}/outputs/{output_id}")
-def download_output(task_id: str, output_id: str):
+def download_output(task_id: str, output_id: str, _=Depends(require_login)):
     with Session(engine) as session:
         output = session.get(Output, output_id)
         if not output or output.task_id != task_id:
@@ -265,7 +266,7 @@ def download_output(task_id: str, output_id: str):
 
 
 @router.get("/api/tasks/{task_id}/download.zip")
-def download_zip(task_id: str):
+def download_zip(task_id: str, _=Depends(require_login)):
     with Session(engine) as session:
         task = session.get(Task, task_id)
         if not task:

@@ -47,6 +47,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
+    credentials: "include",
   });
 
   const rawText = await response.text();

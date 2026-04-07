@@ -25,6 +25,7 @@ export async function uploadFile(file: File): Promise<UploadFileResponse> {
   const response = await fetch(`${getApiBaseUrl()}/api/files`, {
     method: "POST",
     body: formData,
+    credentials: "include",
   });
 
   const json = await parseJsonSafe(response);
