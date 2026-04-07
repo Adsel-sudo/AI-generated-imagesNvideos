@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
+import io
 import logging
 import math
 import mimetypes
@@ -46,6 +48,10 @@ class GenerateContentCallError(RuntimeError):
         self.error_type = error_type
         self.index = index
         self.original = original
+
+
+class GenerateContentTimeoutError(TimeoutError):
+    """Raised when generate_content exceeds configured timeout."""
 
 
 def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
@@ -247,18 +253,26 @@ class GoogleImageProvider(BaseProvider):
                 )
                 mime_type = "image/jpeg"
 
+            prepared_data, prepared_mime_type = self._prepare_reference_payload(
+                task_id=str(task.id),
+                index=idx,
+                role=role,
+                raw_data=data,
+                raw_mime_type=mime_type,
+            )
+
             contents.append(f"Reference #{idx} role={role}: {role_hint}")
 
             part_obj = None
             try:
-                part_obj = genai_types.Part.from_bytes(data=data, mime_type=mime_type)
+                part_obj = genai_types.Part.from_bytes(data=prepared_data, mime_type=prepared_mime_type)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "[provider=%s][stage=references] Part.from_bytes failed for file=%s role=%s mime=%s err=%s; trying PIL fallback",
                     self.name,
                     ref_path,
                     role,
-                    mime_type,
+                    prepared_mime_type,
                     exc,
                 )
 
@@ -287,6 +301,86 @@ class GoogleImageProvider(BaseProvider):
             attached_count,
         )
         return contents
+
+    def _format_bytes(self, size: int) -> str:
+        if size >= 1024 * 1024:
+            return f"{size / (1024 * 1024):.1f}MB"
+        if size >= 1024:
+            return f"{size / 1024:.1f}KB"
+        return f"{size}B"
+
+    def _prepare_reference_payload(
+        self,
+        *,
+        task_id: str,
+        index: int,
+        role: str,
+        raw_data: bytes,
+        raw_mime_type: str,
+    ) -> tuple[bytes, str]:
+        if not settings.google_image_reference_convert_enabled:
+            return raw_data, raw_mime_type
+
+        start_ts = time.perf_counter()
+        orig_bytes = len(raw_data)
+        fallback_dims = "unknown"
+
+        try:
+            with Image.open(io.BytesIO(raw_data)) as source_img:
+                orig_width, orig_height = source_img.size
+                fallback_dims = f"{orig_width}x{orig_height}"
+                max_edge = max(1, settings.google_image_reference_max_edge)
+                longest = max(orig_width, orig_height)
+                if longest > max_edge:
+                    scale = max_edge / float(longest)
+                    resized_width = max(1, int(round(orig_width * scale)))
+                    resized_height = max(1, int(round(orig_height * scale)))
+                    resample = getattr(Image, "Resampling", Image).LANCZOS
+                    processed_img = source_img.resize((resized_width, resized_height), resample=resample)
+                else:
+                    resized_width, resized_height = orig_width, orig_height
+                    processed_img = source_img.copy()
+
+            rgb_img = processed_img.convert("RGB")
+            output = io.BytesIO()
+            rgb_img.save(
+                output,
+                format="JPEG",
+                quality=settings.google_image_reference_jpeg_quality,
+                optimize=True,
+            )
+            prepared_data = output.getvalue()
+            duration = time.perf_counter() - start_ts
+            logger.info(
+                "[provider=%s][stage=reference_prepare][task_id=%s][index=%s][role=%s][orig=%sx%s][orig_bytes=%s][new=%sx%s][new_bytes=%s][duration=%.2fs]",
+                self.name,
+                task_id,
+                index,
+                role,
+                orig_width,
+                orig_height,
+                self._format_bytes(orig_bytes),
+                resized_width,
+                resized_height,
+                self._format_bytes(len(prepared_data)),
+                duration,
+            )
+            return prepared_data, "image/jpeg"
+        except Exception as exc:  # noqa: BLE001
+            duration = time.perf_counter() - start_ts
+            logger.warning(
+                "[provider=%s][stage=reference_prepare_fallback][task_id=%s][index=%s][role=%s][orig=%s][orig_bytes=%s][duration=%.2fs][error_class=%s] %s",
+                self.name,
+                task_id,
+                index,
+                role,
+                fallback_dims,
+                self._format_bytes(orig_bytes),
+                duration,
+                type(exc).__name__,
+                exc,
+            )
+            return raw_data, raw_mime_type
 
     def _extract_response_parts(self, response: Any) -> list[Any]:
         parts = _safe_getattr(response, "parts", None) or []
@@ -321,7 +415,22 @@ class GoogleImageProvider(BaseProvider):
         return runs
 
     def _detect_collage_layout(self, image_path: Path, expected_outputs: int) -> tuple[bool, dict[str, Any]]:
+        guard_start = time.perf_counter()
+        logger.info(
+            "[provider=%s][stage=collage_guard_start][image_path=%s][expected_outputs=%s]",
+            self.name,
+            image_path,
+            expected_outputs,
+        )
         if expected_outputs <= 1:
+            duration = time.perf_counter() - guard_start
+            logger.info(
+                "[provider=%s][stage=collage_guard_done][image_path=%s][detected=%s][reason=single_output][duration=%.2fs]",
+                self.name,
+                image_path,
+                False,
+                duration,
+            )
             return False, {"reason": "single_output"}
 
         with Image.open(image_path) as image:
@@ -329,6 +438,14 @@ class GoogleImageProvider(BaseProvider):
             gray.thumbnail((640, 640))
             width, height = gray.size
             if width < 96 or height < 96:
+                duration = time.perf_counter() - guard_start
+                logger.info(
+                    "[provider=%s][stage=collage_guard_done][image_path=%s][detected=%s][reason=image_too_small][duration=%.2fs]",
+                    self.name,
+                    image_path,
+                    False,
+                    duration,
+                )
                 return False, {"reason": "image_too_small", "width": width, "height": height}
 
             edges = gray.filter(ImageFilter.FIND_EDGES)
@@ -401,6 +518,14 @@ class GoogleImageProvider(BaseProvider):
                 "has_multi_split": has_multi_split,
                 "has_uniform_gutter": has_uniform_gutter,
             }
+            duration = time.perf_counter() - guard_start
+            logger.info(
+                "[provider=%s][stage=collage_guard_done][image_path=%s][detected=%s][duration=%.2fs]",
+                self.name,
+                image_path,
+                detected,
+                duration,
+            )
             return detected, metrics
 
     def _save_part_image(self, part: Any, file_path: Any) -> tuple[str, bool]:
@@ -493,24 +618,70 @@ class GoogleImageProvider(BaseProvider):
         config: Any,
         task_id: str,
         index: int,
+        resolution: str,
+        aspect_ratio: str | None,
+        references_count: int,
         max_retries: int = 3,
     ) -> Any:
+        timeout_seconds = settings.google_image_generate_timeout_seconds
         for retry in range(max_retries):
+            attempt = retry + 1
+            start_ts = time.perf_counter()
+            logger.info(
+                "[provider=%s][stage=generate_content_start][task_id=%s][attempt=%s][model=%s][resolution=%s][image_size=%s][aspect_ratio=%s][refs=%s]",
+                self.name,
+                task_id,
+                attempt,
+                model_name,
+                resolution,
+                resolution,
+                aspect_ratio or "unknown",
+                references_count,
+            )
             try:
-                return client.models.generate_content(
-                    model=model_name,
-                    contents=request_contents,
-                    config=config,
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        client.models.generate_content,
+                        model=model_name,
+                        contents=request_contents,
+                        config=config,
+                    )
+                    response = future.result(timeout=timeout_seconds)
+                duration = time.perf_counter() - start_ts
+                logger.info(
+                    "[provider=%s][stage=generate_content_done][task_id=%s][attempt=%s][duration=%.2fs]",
+                    self.name,
+                    task_id,
+                    attempt,
+                    duration,
+                )
+                return response
+            except concurrent.futures.TimeoutError:
+                duration = time.perf_counter() - start_ts
+                exc = GenerateContentTimeoutError(
+                    f"generate_content timed out after {timeout_seconds}s"
+                )
+                logger.warning(
+                    "[provider=%s][stage=generate_content_timeout][task_id=%s][attempt=%s][timeout_seconds=%s][duration=%.2fs][error_class=%s] %s",
+                    self.name,
+                    task_id,
+                    attempt,
+                    timeout_seconds,
+                    duration,
+                    type(exc).__name__,
+                    exc,
                 )
             except Exception as exc:  # noqa: BLE001
+                duration = time.perf_counter() - start_ts
                 error_type = self._classify_generate_exception(exc)
                 logger.warning(
-                    "[provider=%s][stage=generate_content][task_id=%s][index=%s][retry=%s/%s][error_type=%s][error_class=%s] %s",
+                    "[provider=%s][stage=generate_content_error][task_id=%s][index=%s][attempt=%s/%s][duration=%.2fs][error_type=%s][error_class=%s] %s",
                     self.name,
                     task_id,
                     index,
-                    retry + 1,
+                    attempt,
                     max_retries,
+                    duration,
                     error_type,
                     type(exc).__name__,
                     exc,
@@ -519,6 +690,23 @@ class GoogleImageProvider(BaseProvider):
                     time.sleep(min(2**retry, 4))
                     continue
                 raise GenerateContentCallError(error_type=error_type, index=index, original=exc) from exc
+
+            error_type = self._classify_generate_exception(exc)
+            logger.warning(
+                "[provider=%s][stage=generate_content_error][task_id=%s][index=%s][attempt=%s/%s][error_type=%s][error_class=%s] %s",
+                self.name,
+                task_id,
+                index,
+                attempt,
+                max_retries,
+                error_type,
+                type(exc).__name__,
+                exc,
+            )
+            if error_type == "retryable_network_error" and retry + 1 < max_retries:
+                time.sleep(min(2**retry, 4))
+                continue
+            raise GenerateContentCallError(error_type=error_type, index=index, original=exc) from exc
 
         raise GenerateContentCallError(
             error_type="retryable_network_error",
@@ -550,7 +738,28 @@ class GoogleImageProvider(BaseProvider):
         results: list[ProviderResultItem] = []
         max_attempts = max(1, task.n_outputs * settings.google_image_max_attempts_multiplier)
         last_error_detail: str | None = None
+        references = self._get_references(task)
+        build_refs_start = time.perf_counter()
+        logger.info(
+            "[provider=%s][stage=build_references_start][task_id=%s][refs=%s]",
+            self.name,
+            task.id,
+            len(references),
+        )
         request_contents = self._build_multimodal_contents(task, prompt_text)
+        build_refs_duration = time.perf_counter() - build_refs_start
+        logger.info(
+            "[provider=%s][stage=build_references_done][task_id=%s][refs=%s][duration=%.2fs]",
+            self.name,
+            task.id,
+            len(references),
+            build_refs_duration,
+        )
+        image_config = _safe_getattr(config, "image_config", None)
+        image_size = _safe_getattr(image_config, "image_size", None) or self._normalize_resolution(
+            normalize_task_params(task).resolution
+        )
+        aspect_ratio = _safe_getattr(image_config, "aspect_ratio", None)
         for attempt in range(max_attempts):
             if len(results) >= task.n_outputs:
                 break
@@ -584,6 +793,9 @@ class GoogleImageProvider(BaseProvider):
                     config=config,
                     task_id=str(task.id),
                     index=current_index,
+                    resolution=image_size,
+                    aspect_ratio=aspect_ratio,
+                    references_count=len(references),
                 )
             except GenerateContentCallError as exc:
                 last_error_detail = (
@@ -633,7 +845,25 @@ class GoogleImageProvider(BaseProvider):
                 file_name = f"output_{index}{ext}"
                 file_path = output_dir / file_name
 
+                save_start = time.perf_counter()
+                logger.info(
+                    "[provider=%s][stage=save_image_start][task_id=%s][index=%s][path=%s]",
+                    self.name,
+                    task.id,
+                    index,
+                    file_path,
+                )
                 mime_type, saved = self._save_part_image(part, file_path)
+                save_duration = time.perf_counter() - save_start
+                logger.info(
+                    "[provider=%s][stage=save_image_done][task_id=%s][index=%s][path=%s][saved=%s][duration=%.2fs]",
+                    self.name,
+                    task.id,
+                    index,
+                    file_path,
+                    saved,
+                    save_duration,
+                )
                 if not saved:
                     continue
 
@@ -663,9 +893,35 @@ class GoogleImageProvider(BaseProvider):
                     width=width,
                     height=height,
                 )
+                logger.info(
+                    "[provider=%s][stage=append_result_start][task_id=%s][index=%s][path=%s]",
+                    self.name,
+                    task.id,
+                    index,
+                    file_path,
+                )
                 results.append(output_item)
+                logger.info(
+                    "[provider=%s][stage=append_result_done][task_id=%s][index=%s][path=%s]",
+                    self.name,
+                    task.id,
+                    index,
+                    file_path,
+                )
                 if on_output:
+                    logger.info(
+                        "[provider=%s][stage=on_output_start][task_id=%s][index=%s]",
+                        self.name,
+                        task.id,
+                        index,
+                    )
                     on_output(output_item)
+                    logger.info(
+                        "[provider=%s][stage=on_output_done][task_id=%s][index=%s]",
+                        self.name,
+                        task.id,
+                        index,
+                    )
 
         if not results:
             raise RuntimeError(

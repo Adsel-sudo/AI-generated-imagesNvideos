@@ -7,7 +7,6 @@ import {
   cancelTask,
   generateImageTask,
   getOutputDownloadUrl,
-  getTaskDetail,
   optimizePrompt,
 } from "@/src/lib/api/image";
 import { uploadFile } from "@/src/lib/api/files";
@@ -31,6 +30,8 @@ import {
   type WorkbenchDraft,
 } from "@/src/types/workbench";
 import type { GeneratedOutput } from "@/src/types/conversation";
+import { SessionSidebar } from "@/src/components/workbench/SessionSidebar";
+import { useTaskPolling } from "@/src/hooks/useTaskPolling";
 
 type SizeOption = "1:1" | "16:9" | "4:3" | "3:2" | "other";
 
@@ -49,9 +50,6 @@ const REFERENCE_GROUPS: Array<{ label: string; key: ReferenceCategory; limit: nu
   { label: "姿势参考图", key: "pose", limit: REFERENCE_LIMITS.pose },
   { label: "风格参考图", key: "style", limit: REFERENCE_LIMITS.style },
 ];
-const POLL_INTERVAL_MS = 2000;
-const POLL_STALL_THRESHOLD_MS = 90000;
-const POLL_STALL_NOTICE = "处理时间较长，请稍后在当前对话中继续查看（任务仍在进行）";
 const PANEL_SECTION_SPACING = "py-3";
 const OPTIONAL_BADGE_CLASS =
   "inline-flex items-center rounded-full border border-violet-200/70 bg-violet-50/70 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-500";
@@ -64,9 +62,6 @@ const getSizeDisplayText = (size: string) => {
   return size.trim() || "（未填写）";
 };
 
-const TERMINAL_SUCCESS = new Set(["succeeded", "completed", "done"]);
-const TERMINAL_FAILED = new Set(["failed"]);
-const TERMINAL_CANCELLED = new Set(["cancelled"]);
 const ASPECT_RATIO_PATTERN = /^([1-9]\d*):([1-9]\d*)$/;
 
 const sanitizeAspectRatioInput = (value: string) => {
@@ -91,11 +86,6 @@ const sanitizeAspectRatioInput = (value: string) => {
 
   return result;
 };
-
-const sleep = (ms: number) =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 
 const mapTaskOutputsToGeneratedOutputs = (taskId: string, outputs?: Array<{ id: string; file_path?: string | null; file_name?: string | null }>) =>
   outputs?.map((output) => {
@@ -214,7 +204,6 @@ export default function ImageWorkbenchPage() {
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
   const currentMessageRef = useRef<HTMLElement | null>(null);
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
-  const pollingTaskIdsRef = useRef<Set<string>>(new Set());
   const optimizedPromptPopoverRef = useRef<HTMLDivElement | null>(null);
   const totalReferenceCount = useMemo(
     () =>
@@ -675,161 +664,11 @@ export default function ImageWorkbenchPage() {
     );
   }, []);
 
-  const pollTaskAndSyncMessage = useCallback(async ({
-    conversationId,
-    messageId,
-    taskId,
-  }: {
-    conversationId: string;
-    messageId: string;
-    taskId: string;
-  }) => {
-    let lastProgressCurrent = 0;
-    let lastOutputCount = 0;
-    let lastStatus = "";
-    let lastActivityAt = Date.now();
-    let stallNotified = false;
-
-    while (true) {
-      try {
-        const task = await getTaskDetail(taskId);
-        const status = String(task.status || "").toLowerCase();
-        const parsedProgressCurrent = Number(task.progress_current ?? 0);
-        const progressCurrent = Number.isFinite(parsedProgressCurrent) ? Math.max(0, parsedProgressCurrent) : 0;
-        const parsedProgressTotal = Number(task.progress_total ?? task.n_outputs ?? 0);
-        const progressTotal = Number.isFinite(parsedProgressTotal)
-          ? Math.max(progressCurrent, parsedProgressTotal)
-          : progressCurrent;
-        const progressMessage =
-          typeof task.progress_message === "string" && task.progress_message.trim()
-            ? task.progress_message.trim()
-            : undefined;
-
-        const outputs = mapTaskOutputsToGeneratedOutputs(taskId, task.outputs);
-        const outputCount = outputs.length;
-        const hasActivity =
-          progressCurrent > lastProgressCurrent ||
-          outputCount > lastOutputCount ||
-          (status !== lastStatus &&
-            !TERMINAL_SUCCESS.has(status) &&
-            !TERMINAL_FAILED.has(status) &&
-            !TERMINAL_CANCELLED.has(status));
-
-        if (hasActivity) {
-          lastActivityAt = Date.now();
-          stallNotified = false;
-        }
-        lastProgressCurrent = Math.max(lastProgressCurrent, progressCurrent);
-        lastOutputCount = Math.max(lastOutputCount, outputCount);
-        lastStatus = status;
-
-        if (!TERMINAL_SUCCESS.has(status) && !TERMINAL_FAILED.has(status) && !TERMINAL_CANCELLED.has(status)) {
-          const idleDuration = Date.now() - lastActivityAt;
-          const isStalled = idleDuration >= POLL_STALL_THRESHOLD_MS;
-          if (isStalled) {
-            stallNotified = true;
-          }
-
-          updateMessageById(conversationId, messageId, (message) => ({
-            ...message,
-            progress_current: progressCurrent,
-            progress_total: progressTotal,
-            progress_message: isStalled
-              ? POLL_STALL_NOTICE
-              : progressMessage || (stallNotified ? POLL_STALL_NOTICE : message.progress_message),
-            generated_outputs: outputs.length ? outputs : message.generated_outputs,
-          }));
-
-          await sleep(POLL_INTERVAL_MS);
-          continue;
-        }
-
-        if (TERMINAL_SUCCESS.has(status)) {
-          updateMessageById(conversationId, messageId, (message) => ({
-            ...message,
-            system_status: "done",
-            progress_current: progressTotal || progressCurrent || message.progress_total || 0,
-            progress_total: progressTotal || message.progress_total || 0,
-            progress_message: progressMessage,
-            generated_outputs: outputs.length
-              ? outputs
-              : message.generated_outputs.map((output) => ({
-                  ...output,
-                  status: "failed",
-                })),
-          }));
-          return;
-        }
-
-        if (TERMINAL_CANCELLED.has(status)) {
-          updateMessageById(conversationId, messageId, (message) => ({
-            ...message,
-            system_status: "cancelled",
-            progress_current: progressCurrent || message.progress_current,
-            progress_total: progressTotal || message.progress_total,
-            progress_message: progressMessage || "已停止",
-            generated_outputs: outputs.length ? outputs : message.generated_outputs,
-          }));
-          return;
-        }
-
-        if (TERMINAL_FAILED.has(status)) {
-          const failedReasonRaw =
-            typeof task.error_message === "string" && task.error_message.trim()
-              ? task.error_message.trim()
-              : getFriendlyErrorMessage("generation_failed");
-          const failedReason = getFriendlyErrorMessage("generation_failed", failedReasonRaw);
-          updateMessageById(conversationId, messageId, (message) => ({
-            ...message,
-            system_status: "error",
-            error_message: failedReason,
-            progress_current: progressCurrent || message.progress_current,
-            progress_total: progressTotal || message.progress_total,
-            progress_message: progressMessage,
-            generated_outputs: message.generated_outputs.map((output) => ({
-              ...output,
-              status: "failed",
-            })),
-          }));
-          return;
-        }
-      } catch (error) {
-        updateMessageById(conversationId, messageId, (message) => ({
-          ...message,
-          system_status: "error",
-          error_message: getFriendlyErrorMessage("result_failed", error),
-          generated_outputs: message.generated_outputs.map((output) => ({
-            ...output,
-            status: "failed",
-          })),
-        }));
-        return;
-      }
-    }
-  }, [updateMessageById]);
-
-  const startPollingTask = useCallback((params: { conversationId: string; messageId: string; taskId: string }) => {
-    if (pollingTaskIdsRef.current.has(params.taskId)) {
-      return;
-    }
-    pollingTaskIdsRef.current.add(params.taskId);
-    void pollTaskAndSyncMessage(params).finally(() => {
-      pollingTaskIdsRef.current.delete(params.taskId);
-    });
-  }, [pollTaskAndSyncMessage]);
-
-  useEffect(() => {
-    for (const conversation of conversations) {
-      for (const message of conversation.messages) {
-        if (message.system_status !== "processing" || !message.task_id) continue;
-        startPollingTask({
-          conversationId: conversation.conversation_id,
-          messageId: message.id,
-          taskId: message.task_id,
-        });
-      }
-    }
-  }, [conversations, startPollingTask]);
+  const { startPollingTask } = useTaskPolling({
+    conversations,
+    updateMessageById,
+    mapTaskOutputsToGeneratedOutputs,
+  });
 
   const handleCancelTask = useCallback(
     async ({ conversationId, messageId, taskId }: { conversationId: string; messageId: string; taskId: string }) => {
@@ -1400,56 +1239,13 @@ export default function ImageWorkbenchPage() {
           </div>
         </section>
 
-        <aside className="order-3 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur">
-          <div className="flex h-full min-h-0 flex-col divide-y divide-slate-200/80">
-            <div className="flex items-center justify-between px-3 py-2.5 sm:px-4">
-              <span className="text-sm font-semibold text-slate-700">对话列表</span>
-              <button
-                type="button"
-                className="inline-flex items-center justify-center rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 transition hover:bg-violet-100"
-                onClick={handleNewConversation}
-                aria-label="新建对话"
-              >
-                +新对话
-              </button>
-            </div>
-            <div className="flex flex-1 flex-col gap-2.5 overflow-y-auto px-3 py-2.5 sm:px-4">
-              {conversations.map((conversation) => (
-                <div key={conversation.conversation_id} className="group relative">
-                  <button
-                    type="button"
-                    onClick={() => setActiveConversationId(conversation.conversation_id)}
-                    className={`w-full rounded-lg border px-2 py-1 text-left transition ${
-                      activeConversationId === conversation.conversation_id
-                        ? "border-violet-300 bg-violet-50/90 text-violet-800 shadow-[0_4px_12px_rgba(124,58,237,0.15)]"
-                        : "border-slate-200/90 bg-white/80 text-slate-700 hover:bg-slate-100/70"
-                    }`}
-                  >
-                    <div className="truncate pr-5 text-sm font-medium leading-5">{conversation.title}</div>
-                    <div
-                      className={`mt-0.5 truncate text-[10px] ${
-                        activeConversationId === conversation.conversation_id ? "text-violet-400/90" : "text-slate-400/80"
-                      }`}
-                    >
-                      {new Date(conversation.updated_at).toLocaleString()}
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleDeleteConversation(conversation.conversation_id);
-                    }}
-                    className="absolute right-1.5 top-1.5 hidden h-5 w-5 items-center justify-center rounded-md border border-slate-200 bg-white/95 text-[11px] text-slate-500 shadow-sm transition hover:border-rose-200 hover:text-rose-600 group-hover:inline-flex"
-                    aria-label="删除对话"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </aside>
+        <SessionSidebar
+          conversations={conversations}
+          activeConversationId={activeConversationId}
+          onSelectConversation={setActiveConversationId}
+          onDeleteConversation={handleDeleteConversation}
+          onNewConversation={handleNewConversation}
+        />
       </div>
 
       {previewState && previewOutput?.url ? (

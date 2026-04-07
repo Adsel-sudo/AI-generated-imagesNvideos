@@ -44,6 +44,28 @@ class Settings(BaseSettings):
         le=8,
         validation_alias="GOOGLE_IMAGE_MAX_ATTEMPTS_MULTIPLIER",
     )
+    google_image_generate_timeout_seconds: int = Field(
+        default=180,
+        ge=5,
+        le=1800,
+        validation_alias="GOOGLE_IMAGE_GENERATE_TIMEOUT_SECONDS",
+    )
+    google_image_reference_max_edge: int = Field(
+        default=2048,
+        ge=256,
+        le=8192,
+        validation_alias="GOOGLE_IMAGE_REFERENCE_MAX_EDGE",
+    )
+    google_image_reference_jpeg_quality: int = Field(
+        default=90,
+        ge=50,
+        le=100,
+        validation_alias="GOOGLE_IMAGE_REFERENCE_JPEG_QUALITY",
+    )
+    google_image_reference_convert_enabled: bool = Field(
+        default=True,
+        validation_alias="GOOGLE_IMAGE_REFERENCE_CONVERT_ENABLED",
+    )
     prompt_optimizer_model: str = Field(
         default=DEFAULT_PROMPT_OPTIMIZER_MODEL,
         validation_alias="PROMPT_OPTIMIZER_MODEL",
