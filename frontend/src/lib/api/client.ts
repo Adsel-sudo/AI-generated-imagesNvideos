@@ -8,6 +8,13 @@ interface RequestOptions {
 }
 
 function getErrorMessage(response: Response, rawText: string, parsed: unknown): string {
+  const normalizedBody = rawText.trim();
+  const looksLikeHtml = /^<!doctype html>|^<html[\s>]/i.test(normalizedBody);
+
+  if (response.status === 502 || (response.status >= 500 && looksLikeHtml)) {
+    return "服务暂时不可用，请稍后重试";
+  }
+
   if (typeof parsed === "string" && parsed.trim()) {
     return parsed.trim();
   }
@@ -19,7 +26,7 @@ function getErrorMessage(response: Response, rawText: string, parsed: unknown): 
     (typeof parsedError?.detail === "string" && parsedError.detail) ||
     (typeof parsedError?.message === "string" && parsedError.message) ||
     (typeof parsedError?.error === "string" && parsedError.error) ||
-    rawText.trim() ||
+    normalizedBody ||
     `Request failed with status ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`
   );
 }
