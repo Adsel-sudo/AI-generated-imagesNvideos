@@ -4,6 +4,7 @@ from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
 
 from .config import settings
+from . import models  # noqa: F401
 
 connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 engine = create_engine(settings.database_url, connect_args=connect_args)

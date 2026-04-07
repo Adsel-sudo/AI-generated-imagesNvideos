@@ -48,3 +48,9 @@ class Output(SQLModel, table=True):
     checksum: Optional[str] = None
     target_type: Optional[str] = None
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class User(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    username: str = Field(index=True, unique=True)
+    password_hash: str

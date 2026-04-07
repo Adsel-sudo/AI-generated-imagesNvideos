@@ -11,6 +11,8 @@ DEFAULT_PROMPT_OPTIMIZER_MODEL = "gemini-3-flash-preview"
 class Settings(BaseSettings):
     redis_url: str = Field(default="redis://redis:6379/0", validation_alias="REDIS_URL")
     database_url: str = Field(default="sqlite:///data/db/app.db", validation_alias="DATABASE_URL")
+    session_secret: str = Field(default="dev-session-secret-change-me", validation_alias="SESSION_SECRET")
+    session_cookie_name: str = Field(default="ai_workbench_session", validation_alias="SESSION_COOKIE_NAME")
 
     data_dir: Path = Path("data")
     outputs_dir: Path = Path("data/outputs")
