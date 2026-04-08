@@ -245,3 +245,6 @@ data/*
 
 # nginx Basic Auth is generated inside the container
 nginx/.htpasswd
+
+#account & pwd
+backend/scripts/seed_users.json
