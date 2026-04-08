@@ -182,11 +182,9 @@ function getMessageStatusBadge(status: Conversation["messages"][number]["system_
 
 export default function ImageWorkbenchPage() {
   const {
-    user,
     loading: authLoading,
     isAuthenticated,
     loginWithPassword,
-    logoutCurrentUser,
   } = useAuthStatus();
   const [sessionId, setSessionId] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -842,9 +840,6 @@ export default function ImageWorkbenchPage() {
     await loginWithPassword(username, password);
   };
 
-  const handleLogout = async () => {
-    await logoutCurrentUser();
-  };
 
   const sending = optimizeLoading || isSubmitting;
   const hasValidSize = selectedSizeOption !== "other" || customSizeReady;
@@ -852,18 +847,6 @@ export default function ImageWorkbenchPage() {
 
   return (
     <main className="relative h-[calc(100dvh-60px)] overflow-hidden bg-slate-100/80 px-2.5 py-1.5 sm:px-3 sm:py-2">
-      {isAuthenticated ? (
-        <button
-          type="button"
-          className="absolute top-3 right-3 z-30 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-          onClick={() => {
-            void handleLogout();
-          }}
-        >
-          Logout ({user?.username})
-        </button>
-      ) : null}
-
       <div className={`mx-auto grid h-full w-full max-w-[1480px] grid-cols-1 gap-1.5 lg:grid-cols-[304px_minmax(0,1fr)_280px] lg:gap-x-2.5 ${!isAuthenticated ? "pointer-events-none select-none opacity-70" : ""}`}>
         <aside className="order-2 flex min-h-0 flex-col rounded-2xl border border-slate-200/80 bg-white/70 shadow-[0_8px_24px_rgba(30,41,59,0.06)] backdrop-blur lg:order-1">
           <div className="flex-1 overflow-y-auto px-3 pt-6 pb-2 sm:px-4">

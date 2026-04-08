@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuthStatus } from "@/src/hooks/useAuthStatus";
 
 function NavItem({ href, label }: { href: string; label: string }) {
   const pathname = usePathname();
@@ -24,15 +25,29 @@ function NavItem({ href, label }: { href: string; label: string }) {
 }
 
 export function TopNav() {
+  const { user, isAuthenticated, logoutCurrentUser } = useAuthStatus();
+
   return (
     <header className="sticky top-0 z-20 border-b border-violet-100/60 bg-gradient-to-r from-slate-100/90 via-slate-100/85 to-violet-100/60 shadow-[0_6px_18px_rgba(15,23,42,0.06)] backdrop-blur supports-[backdrop-filter]:bg-slate-100/70">
-      <div className="relative mx-auto flex h-[60px] w-full max-w-[1520px] items-center justify-between px-3 sm:px-4">
+      <div className="relative mx-auto flex h-[60px] w-full max-w-[1520px] items-center justify-between gap-3 px-3 sm:px-4">
         <nav className="flex items-center gap-1.5">
           <NavItem href="/" label="AI图片" />
         </nav>
-        <span className="pointer-events-none absolute bottom-1.5 right-3 text-[11px] text-slate-500 sm:right-4">
-          当前模型：Nano Banana 2
-        </span>
+
+        <div className="flex items-center gap-2">
+          {isAuthenticated ? (
+            <button
+              type="button"
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+              onClick={() => {
+                void logoutCurrentUser();
+              }}
+            >
+              Logout ({user?.username})
+            </button>
+          ) : null}
+          <span className="text-[11px] text-slate-500">当前模型：Nano Banana 2</span>
+        </div>
       </div>
     </header>
   );
