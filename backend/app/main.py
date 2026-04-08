@@ -4,6 +4,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .auth_routes import router as auth_router
 from .config import settings
 from .db import init_db
+from .init_users import init_users_if_empty
 from .routes import router
 from .storage import ensure_data_dirs
 
@@ -21,6 +22,7 @@ app.add_middleware(
 def startup_event() -> None:
     ensure_data_dirs()
     init_db()
+    init_users_if_empty()
 
 
 app.include_router(auth_router)

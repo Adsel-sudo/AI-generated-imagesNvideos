@@ -13,14 +13,14 @@ from app.models import User
 DATA_FILE = Path(__file__).with_name("seed_users.json")
 
 
-def load_seed_data() -> list[dict[str, str]]:
-    if not DATA_FILE.exists():
+def load_seed_data(data_file: Path = DATA_FILE) -> list[dict[str, str]]:
+    if not data_file.exists():
         raise FileNotFoundError(
-            f"未找到种子数据文件: {DATA_FILE}\n"
+            f"未找到种子数据文件: {data_file}\n"
             f"请创建该文件，并写入账号列表。"
         )
 
-    with DATA_FILE.open("r", encoding="utf-8") as f:
+    with data_file.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
     if not isinstance(data, list):
@@ -44,44 +44,50 @@ def load_seed_data() -> list[dict[str, str]]:
     return normalized
 
 
-def seed_users(update_password: bool = True) -> None:
-    users = load_seed_data()
+def seed_users_from_file(
+    session: Session,
+    data_file: Path = DATA_FILE,
+    update_password: bool = True,
+) -> None:
+    users = load_seed_data(data_file)
 
     created = 0
     updated = 0
     skipped = 0
 
-    with Session(engine) as session:
-        for item in users:
-            username = item["username"]
-            password = item["password"]
+    for item in users:
+        username = item["username"]
+        password = item["password"]
 
-            existing = session.exec(
-                select(User).where(User.username == username)
-            ).first()
+        existing = session.exec(select(User).where(User.username == username)).first()
 
-            password_hash = hash_password(password)
+        password_hash = hash_password(password)
 
-            if existing:
-                if update_password:
-                    existing.password_hash = password_hash
-                    session.add(existing)
-                    updated += 1
-                    print(f"[UPDATED] {username}")
-                else:
-                    skipped += 1
-                    print(f"[SKIPPED] {username}")
+        if existing:
+            if update_password:
+                existing.password_hash = password_hash
+                session.add(existing)
+                updated += 1
+                print(f"[UPDATED] {username}")
             else:
-                user = User(username=username, password_hash=password_hash)
-                session.add(user)
-                created += 1
-                print(f"[CREATED] {username}")
+                skipped += 1
+                print(f"[SKIPPED] {username}")
+        else:
+            user = User(username=username, password_hash=password_hash)
+            session.add(user)
+            created += 1
+            print(f"[CREATED] {username}")
 
-        session.commit()
+    session.commit()
 
     print(
         f"\n完成: created={created}, updated={updated}, skipped={skipped}, total={len(users)}"
     )
+
+
+def seed_users(update_password: bool = True) -> None:
+    with Session(engine) as session:
+        seed_users_from_file(session=session, data_file=DATA_FILE, update_password=update_password)
 
 
 def main() -> None:
