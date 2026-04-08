@@ -3,9 +3,9 @@ from pathlib import Path
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.db import engine
-from app.models import User
-from scripts.seed_users import seed_users_from_file
+from .db import engine
+from .models import User
+from .user_seed import seed_users_from_file
 
 SEED_USERS_FILE = Path(__file__).resolve().parent.parent / "scripts" / "seed_users.json"
 
