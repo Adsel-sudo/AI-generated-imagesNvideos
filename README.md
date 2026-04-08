@@ -21,6 +21,7 @@
 
 - 根据自然语言需求创建生图任务
 - 支持提示词优化后再生成
+- 支持比例与分辨率选项（预设分辨率 + 自定义比例）
 - 支持任务状态轮询（排队/处理中/完成/失败/取消）
 - 支持生成结果文件输出与下载（单图下载 + 任务 ZIP 下载）
 
@@ -30,11 +31,13 @@
 - 优化提示词：`POST /api/prompt/optimize`
 - 使用优化结果生成任务：`POST /api/prompt/generate-task`
 - 支持参考图角色：商品图、构图图、姿势图、风格图
+- 提示词优化会注入“主体身份保持”约束，降低商品主体漂移
 
 ### 2.3 前端工作台能力
 
 - AI 图片工作台首页：`/`
 - 会话式编辑与状态持久化
+- 登录弹窗 + Session/Cookie 鉴权，未登录不可操作工作台
 - 任务轮询与失败提示映射
 - 生成结果预览与下载
 
@@ -101,3 +104,42 @@ curl -I http://localhost:8080/
 - `data/`：本地持久化目录（上传/输出/压缩包/日志/数据库）
 - `docker-compose.yml`：默认部署
 - `docker-compose.prod.yml`：偏服务器化部署（含 PostgreSQL）
+
+---
+
+## 7. 文件定期清理（建议）
+
+为控制磁盘增长，建议每日执行一次文件清理脚本：
+
+```bash
+python backend/scripts/cleanup_files.py
+```
+
+默认保留策略（按文件 mtime 判断）：
+
+- `data/uploads`：45 天
+- `data/outputs`：120 天
+- `data/zips`：7 天
+- `data/logs`：30 天
+
+推荐使用宿主机 `cron` 调用容器内脚本，例如：
+
+```cron
+0 3 * * * docker exec api python /app/backend/scripts/cleanup_files.py >> /var/log/ai-cleanup.log 2>&1
+```
+
+上述配置表示每天凌晨 3 点执行一次。
+
+
+---
+
+## 8. 身份认证与安全建议
+
+当前版本已启用账号登录与 Session/Cookie 鉴权（`/api/auth/login`、`/api/auth/logout`、`/api/auth/me`）。
+
+部署建议：
+
+- 生产环境务必设置强密码并定期轮换账号密码。
+- 配置反向代理与 HTTPS，避免明文传输登录会话。
+- 建议仅开放公司内网访问，避免直接暴露到公网。
+- 配合最小权限原则管理运维账号（创建/重置账号可使用 `backend/scripts/` 下脚本）。
