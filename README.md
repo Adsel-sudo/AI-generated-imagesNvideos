@@ -11,7 +11,7 @@
 - **业务定位**：公司内部 AI 生图平台 / AI 图片生成工作台
 - **当前状态**：AI 生图已可用并用于日常产出
 - **部署形态**：Docker Compose 一体化部署，默认本地磁盘持久化
-- **访问控制**：Nginx Basic Auth（适合内网/内部环境）
+- **访问控制**：系统内账号登录（Session/Cookie）
 
 ---
 
@@ -84,10 +84,10 @@ cp .env.example .env
 docker compose up --build
 ```
 
-3. 健康检查（需 Basic Auth）：
+3. 访问检查：
 
 ```bash
-curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD" http://localhost:8080/health
+curl -I http://localhost:8080/
 ```
 
 ---
@@ -97,7 +97,7 @@ curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD" http://localhost:8080/health
 - `backend/`：FastAPI API、数据模型、provider 路由、任务调度
 - `worker/`：Celery worker 入口
 - `frontend/`：Next.js AI 生图工作台
-- `nginx/`：反向代理与 Basic Auth
+- `nginx/`：反向代理配置
 - `data/`：本地持久化目录（上传/输出/压缩包/日志/数据库）
 - `docker-compose.yml`：默认部署
 - `docker-compose.prod.yml`：偏服务器化部署（含 PostgreSQL）
