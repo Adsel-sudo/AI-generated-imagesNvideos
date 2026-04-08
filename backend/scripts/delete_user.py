@@ -10,15 +10,13 @@ backend_dir = str(Path(__file__).resolve().parents[1])
 if backend_dir not in sys.path:
     sys.path.append(backend_dir)
 
-from app.auth import hash_password
 from app.db import engine, init_db
 from app.models import User
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Reset password for an existing user")
+    parser = argparse.ArgumentParser(description="Delete an existing user")
     parser.add_argument("username", help="login username")
-    parser.add_argument("password", help="new plain text password")
     args = parser.parse_args()
 
     username = args.username.strip()
@@ -33,11 +31,10 @@ def main() -> None:
             print(f"[NOT FOUND] {username}")
             raise SystemExit(1)
 
-        user.password_hash = hash_password(args.password)
-        session.add(user)
+        session.delete(user)
         session.commit()
 
-    print(f"[UPDATED] {username}")
+    print(f"[DELETED] {username}")
 
 
 if __name__ == "__main__":

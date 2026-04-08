@@ -1,6 +1,14 @@
+from __future__ import annotations
+
 import argparse
+import sys
+from pathlib import Path
 
 from sqlmodel import Session, select
+
+backend_dir = str(Path(__file__).resolve().parents[1])
+if backend_dir not in sys.path:
+    sys.path.append(backend_dir)
 
 from app.auth import hash_password
 from app.db import engine, init_db
@@ -19,17 +27,19 @@ def main() -> None:
 
     init_db()
 
+    status = ""
     with Session(engine) as session:
         existing = session.exec(select(User).where(User.username == username)).first()
         if existing:
-            raise SystemExit(f"user already exists: {username}")
+            status = "EXISTS"
+        else:
+            user = User(username=username, password_hash=hash_password(args.password))
+            session.add(user)
+            session.commit()
+            status = "CREATED"
 
-        user = User(username=username, password_hash=hash_password(args.password))
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-
-    print(f"created user: id={user.id} username={user.username}")
+    print(f"[{status}] {username}")
+    print(f"summary: username={username} status={status}")
 
 
 if __name__ == "__main__":
