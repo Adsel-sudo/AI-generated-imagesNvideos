@@ -1,6 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from sqlmodel import Session, select
@@ -9,6 +10,7 @@ from .celery_app import celery_app
 from .config import settings
 from .db import engine
 from .enums import TaskStatus, TaskType
+from .image_variants import ensure_image_variants
 from .models import Output, Task, utcnow
 from .providers.router import get_provider
 
@@ -183,6 +185,8 @@ def generate_task(task_id: str):
                 task.updated_at = utcnow()
                 session.add(task)
                 session.commit()
+                if (item.file_type or "").lower() == "image":
+                    ensure_image_variants(Path(item.file_path))
 
             for target_type, target_task in targets:
                 session.refresh(task)

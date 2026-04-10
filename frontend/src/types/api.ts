@@ -15,7 +15,15 @@ export type TaskType = "image" | "prompt" | string;
 export interface OutputItem {
   id: string;
   task_id: string;
+  index?: number | null;
   file_path?: string | null;
+  original_path?: string | null;
+  preview_path?: string | null;
+  thumbnail_path?: string | null;
+  preview_url?: string | null;
+  thumbnail_url?: string | null;
+  lowres_url?: string | null;
+  original_url?: string | null;
   mime_type?: string | null;
   file_name?: string | null;
   width?: number | null;
@@ -47,18 +55,21 @@ export interface TaskParamsJson {
 
 export interface TaskDetail {
   id: string;
-  type: TaskType;
-  request_text?: string | null;
-  params_json?: TaskParamsJson | null;
   status: TaskStatus;
-  n_outputs?: number | null;
   progress_current?: number | null;
   progress_total?: number | null;
-  progress_message?: string | null;
-  model_name?: string | null;
-  prompt_final?: string | null;
-  error_message?: string | null;
-  outputs?: OutputItem[];
+  progress_percent?: number | null;
+  message?: string | null;
+  error?: string | null;
+  output_count?: number | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface TaskOutputsResponse {
+  task_id: string;
+  page: number;
+  page_size: number;
+  total: number;
+  items: OutputItem[];
 }

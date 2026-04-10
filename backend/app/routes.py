@@ -2,11 +2,14 @@ import json
 import logging
 import mimetypes
 import zipfile
+from datetime import UTC, datetime
+from email.utils import format_datetime, parsedate_to_datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from sqlalchemy import func
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, Response
 from sqlmodel import Session, desc, select
 
 from .constants import DEFAULT_PROVIDER
@@ -15,6 +18,7 @@ from .config import settings
 from .celery_app import celery_app
 from .db import engine
 from .enums import TaskStatus
+from .image_variants import build_variant_path
 from .models import Output, Task, utcnow
 from .prompt_optimizer import prompt_optimizer
 from .schemas import (
@@ -23,12 +27,62 @@ from .schemas import (
     PromptGenerateTaskRequest,
     PromptOptimizeRequest,
     PromptOptimizeResponse,
+    TaskDetailLiteResponse,
+    TaskOutputsPageResponse,
 )
 from .storage import get_task_zip_path
 from .tasks import generate_task
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _build_output_payload(task_id: str, output: Output) -> dict:
+    original_path = Path(output.file_path)
+    preview_path = build_variant_path(original_path, "preview")
+    thumbnail_path = build_variant_path(original_path, "thumbnail")
+    payload = output.model_dump()
+    payload.update(
+        {
+            "original_path": str(original_path),
+            "preview_path": str(preview_path) if preview_path.exists() else None,
+            "thumbnail_path": str(thumbnail_path) if thumbnail_path.exists() else None,
+            "original_url": f"/api/tasks/{task_id}/outputs/{output.id}",
+            "preview_url": f"/api/tasks/{task_id}/outputs/{output.id}?variant=preview" if preview_path.exists() else None,
+            "thumbnail_url": f"/api/tasks/{task_id}/outputs/{output.id}?variant=thumbnail"
+            if thumbnail_path.exists()
+            else None,
+        }
+    )
+    return payload
+
+
+def _build_cache_headers(output_file: Path) -> dict[str, str]:
+    stat = output_file.stat()
+    etag = f"\"{stat.st_mtime_ns:x}-{stat.st_size:x}\""
+    last_modified = format_datetime(datetime.fromtimestamp(stat.st_mtime, tz=UTC), usegmt=True)
+    return {
+        "ETag": etag,
+        "Last-Modified": last_modified,
+        "Cache-Control": "private, max-age=31536000, immutable",
+    }
+
+
+def _is_not_modified(request: Request, output_file: Path, etag: str) -> bool:
+    if_none_match = (request.headers.get("if-none-match") or "").strip()
+    if if_none_match and if_none_match == etag:
+        return True
+
+    if_modified_since = request.headers.get("if-modified-since")
+    if if_modified_since:
+        try:
+            since = parsedate_to_datetime(if_modified_since)
+            file_mtime = output_file.stat().st_mtime
+            if file_mtime <= since.timestamp():
+                return True
+        except Exception:  # noqa: BLE001
+            return False
+    return False
 
 
 @router.get("/health")
@@ -197,26 +251,57 @@ def list_tasks(_=Depends(require_login)):
         return tasks
 
 
-@router.get("/api/tasks/{task_id}")
+@router.get("/api/tasks/{task_id}", response_model=TaskDetailLiteResponse)
 def get_task(task_id: str, _=Depends(require_login)):
     with Session(engine) as session:
         task = session.get(Task, task_id)
         if not task:
             raise HTTPException(status_code=404, detail="task not found")
 
-        outputs = session.exec(select(Output).where(Output.task_id == task_id).order_by(Output.index)).all()
+        total = session.exec(select(func.count()).select_from(Output).where(Output.task_id == task_id)).one()
+        progress_total = max(0, int(task.progress_total or 0))
+        progress_current = max(0, int(task.progress_current or 0))
+        progress_percent = (progress_current / progress_total * 100) if progress_total > 0 else 0
 
-        outputs_data = [output.model_dump() for output in outputs]
-        outputs_by_target: dict[str, list[dict]] = {}
-        for item in outputs_data:
-            group = item.get("target_type") or "default"
-            outputs_by_target.setdefault(group, []).append(item)
+        return TaskDetailLiteResponse(
+            id=task.id,
+            status=task.status,
+            progress_current=progress_current,
+            progress_total=progress_total,
+            progress_percent=round(progress_percent, 2),
+            message=task.progress_message,
+            error=task.error_message,
+            created_at=task.created_at,
+            updated_at=task.updated_at,
+            output_count=int(total or 0),
+        )
 
-        return {
-            **task.model_dump(),
-            "outputs": outputs_data,
-            "outputs_by_target": outputs_by_target,
-        }
+
+@router.get("/api/tasks/{task_id}/outputs", response_model=TaskOutputsPageResponse)
+def list_task_outputs(
+    task_id: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    _=Depends(require_login),
+):
+    with Session(engine) as session:
+        task = session.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="task not found")
+
+        total = session.exec(select(func.count()).select_from(Output).where(Output.task_id == task_id)).one()
+        start = (page - 1) * page_size
+        items = session.exec(
+            select(Output).where(Output.task_id == task_id).order_by(Output.index).offset(start).limit(page_size)
+        ).all()
+
+        return TaskOutputsPageResponse(
+            task_id=task_id,
+            page=page,
+            page_size=page_size,
+            total=int(total or 0),
+            items=[_build_output_payload(task_id, item) for item in items],
+        )
 
 
 @router.post("/api/tasks/{task_id}/cancel")
@@ -252,17 +337,33 @@ def cancel_task(task_id: str, _=Depends(require_login)):
 
 
 @router.get("/api/tasks/{task_id}/outputs/{output_id}")
-def download_output(task_id: str, output_id: str, _=Depends(require_login)):
+def download_output(
+    request: Request,
+    task_id: str,
+    output_id: str,
+    variant: str = Query(default="original"),
+    _=Depends(require_login),
+):
     with Session(engine) as session:
         output = session.get(Output, output_id)
         if not output or output.task_id != task_id:
             raise HTTPException(status_code=404, detail="output not found")
 
     output_file = Path(output.file_path)
+    normalized_variant = (variant or "original").strip().lower()
+    if normalized_variant in {"preview", "thumbnail"}:
+        candidate = build_variant_path(output_file, normalized_variant)
+        if candidate.exists():
+            output_file = candidate
+        else:
+            raise HTTPException(status_code=404, detail=f"{normalized_variant} file missing")
     if not output_file.exists():
         raise HTTPException(status_code=404, detail="file missing")
 
-    return FileResponse(path=output_file, media_type=output.mime_type, filename=output_file.name)
+    cache_headers = _build_cache_headers(output_file)
+    if _is_not_modified(request, output_file, cache_headers["ETag"]):
+        return Response(status_code=304, headers=cache_headers)
+    return FileResponse(path=output_file, media_type=output.mime_type, filename=output_file.name, headers=cache_headers)
 
 
 @router.get("/api/tasks/{task_id}/download.zip")

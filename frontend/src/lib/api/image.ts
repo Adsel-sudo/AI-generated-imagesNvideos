@@ -1,5 +1,5 @@
 import { getApiBaseUrl, request } from "@/src/lib/api/client";
-import type { TaskDetail } from "@/src/types/api";
+import type { TaskDetail, TaskOutputsResponse } from "@/src/types/api";
 import type {
   GenerateTaskRequestPayload,
   GenerateTaskResponse,
@@ -23,6 +23,15 @@ export function generateImageTask(payload: GenerateTaskRequestPayload) {
 
 export function getTaskDetail(taskId: string) {
   return request<TaskDetail>(`/api/tasks/${taskId}`);
+}
+
+export function getTaskOutputs(taskId: string, params?: { page?: number; page_size?: number }) {
+  const query = new URLSearchParams();
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.page_size) query.set("page_size", String(params.page_size));
+  const qs = query.toString();
+  const path = qs ? `/api/tasks/${taskId}/outputs?${qs}` : `/api/tasks/${taskId}/outputs`;
+  return request<TaskOutputsResponse>(path);
 }
 
 export function cancelTask(taskId: string) {

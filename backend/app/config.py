@@ -19,6 +19,22 @@ class Settings(BaseSettings):
     uploads_dir: Path = Path("data/uploads")
     zips_dir: Path = Path("data/zips")
     logs_dir: Path = Path("data/logs")
+    cleanup_uploads_retention_days: int = Field(default=14, ge=1, le=3650, validation_alias="CLEANUP_UPLOADS_RETENTION_DAYS")
+    cleanup_outputs_retention_days: int = Field(default=30, ge=1, le=3650, validation_alias="CLEANUP_OUTPUTS_RETENTION_DAYS")
+    cleanup_zips_retention_days: int = Field(default=3, ge=1, le=3650, validation_alias="CLEANUP_ZIPS_RETENTION_DAYS")
+    cleanup_logs_retention_days: int = Field(default=14, ge=1, le=3650, validation_alias="CLEANUP_LOGS_RETENTION_DAYS")
+    cleanup_failed_cancelled_retention_days: int = Field(
+        default=7,
+        ge=1,
+        le=3650,
+        validation_alias="CLEANUP_FAILED_CANCELLED_RETENTION_DAYS",
+    )
+    cleanup_success_retention_days: int = Field(
+        default=30,
+        ge=1,
+        le=3650,
+        validation_alias="CLEANUP_SUCCESS_RETENTION_DAYS",
+    )
 
     # Google provider settings.
     google_api_key: str | None = Field(default=None, validation_alias="GOOGLE_API_KEY")

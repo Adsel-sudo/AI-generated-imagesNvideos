@@ -107,28 +107,65 @@ curl -I http://localhost:8080/
 
 ---
 
-## 7. 文件定期清理（建议）
+## 7. 文件/数据库定期清理（建议）
 
-为控制磁盘增长，建议每日执行一次文件清理脚本：
+为控制磁盘增长并减少“文件已删但数据库仍有记录”的不一致，建议每日执行一次清理脚本：
 
 ```bash
+python backend/scripts/cleanup_files.py --dry-run
 python backend/scripts/cleanup_files.py
 ```
 
-默认保留策略（按文件 mtime 判断）：
+默认保留策略：
 
-- `data/uploads`：45 天
-- `data/outputs`：120 天
-- `data/zips`：7 天
-- `data/logs`：30 天
+- 文件目录（按文件 mtime）：
+  - `data/uploads`：14 天
+  - `data/outputs`：30 天
+  - `data/zips`：3 天
+  - `data/logs`：14 天
+- 数据库任务记录（按任务结束/更新时间）：
+  - `failed/cancelled`：7 天
+  - `done/completed/success/succeeded`：30 天
+  - `queued/running/processing/pending/saving`：绝不清理
+
+该脚本支持：
+
+- `--dry-run`：仅输出将执行的动作，不实际删除
+- 活跃任务引用的 upload 文件保护（避免误删仍在任务链路中的上传原图）
+- 孤儿 `Output` 记录清理（`task_id` 不存在）
+- 任务清理时优先删关联文件，再删 `Output` 与 `Task` 记录（保守策略）
+
+Docker Compose 内执行方式：
+
+```bash
+docker compose exec api python /app/backend/scripts/cleanup_files.py --dry-run
+docker compose exec api python /app/backend/scripts/cleanup_files.py
+```
 
 推荐使用宿主机 `cron` 调用容器内脚本，例如：
 
 ```cron
-0 3 * * * docker exec api python /app/backend/scripts/cleanup_files.py >> /var/log/ai-cleanup.log 2>&1
+0 3 * * * docker compose exec -T api python /app/backend/scripts/cleanup_files.py --dry-run >> /var/log/ai-cleanup.log 2>&1
+10 3 * * * docker compose exec -T api python /app/backend/scripts/cleanup_files.py >> /var/log/ai-cleanup.log 2>&1
 ```
 
-上述配置表示每天凌晨 3 点执行一次。
+上述配置表示每天凌晨 3:00 先 dry-run，3:10 再正式执行。
+
+上线前自检清单：
+
+- [ ] `.env` 中清理阈值已确认（含任务保留策略）
+- [ ] 连续执行至少 2~3 次 `--dry-run`，确认删除候选符合预期
+- [ ] 核对 active task 保护数量与 upload 引用保护数量日志
+- [ ] 确认容器对 `data/` 目录具备读写/删除权限
+- [ ] 确认清理日志会被持久化并可检索
+
+上线后验证清单：
+
+- [ ] 每日查看清理 summary（文件删除量、DB 删除量、跳过量）
+- [ ] 监控 output 下载 404 比例是否异常
+- [ ] 监控磁盘占用趋势（outputs/zips/logs）是否持续下降
+- [ ] 抽样验证最近 24 小时活跃任务不受影响
+- [ ] 出现异常时可先切回仅 dry-run（停正式清理）
 
 
 ---

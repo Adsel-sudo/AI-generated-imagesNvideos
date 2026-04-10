@@ -54,6 +54,9 @@ class OutputResponse(BaseModel):
     task_id: str
     index: int
     file_path: str
+    original_path: Optional[str] = None
+    preview_path: Optional[str] = None
+    thumbnail_path: Optional[str] = None
     mime_type: str
     file_type: Optional[str] = None
     file_name: Optional[str] = None
@@ -63,6 +66,9 @@ class OutputResponse(BaseModel):
     duration_seconds: Optional[float] = None
     checksum: Optional[str] = None
     target_type: Optional[str] = None
+    original_url: Optional[str] = None
+    preview_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
     created_at: datetime
 
 
@@ -86,6 +92,27 @@ class TaskResponse(BaseModel):
     finished_at: Optional[datetime] = None
     error_message: Optional[str] = None
     outputs: list[OutputResponse] = Field(default_factory=list)
+
+
+class TaskDetailLiteResponse(BaseModel):
+    id: str
+    status: str
+    progress_current: int = 0
+    progress_total: int = 0
+    progress_percent: float = 0
+    message: Optional[str] = None
+    error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    output_count: int = 0
+
+
+class TaskOutputsPageResponse(BaseModel):
+    task_id: str
+    page: int = 1
+    page_size: int = 20
+    total: int = 0
+    items: list[OutputResponse] = Field(default_factory=list)
 
 
 class ReferenceInput(BaseModel):
