@@ -6,6 +6,7 @@ export type GeneratedOutput = {
   id: string;
   kind: "image";
   url?: string;
+  preview_url?: string;
   downloadUrl?: string;
   file_path?: string;
   file_name?: string;

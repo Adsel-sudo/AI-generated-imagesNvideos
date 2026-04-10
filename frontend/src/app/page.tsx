@@ -7,6 +7,7 @@ import {
   cancelTask,
   generateImageTask,
   getOutputDownloadUrl,
+  getTaskOutputs,
   optimizePrompt,
 } from "@/src/lib/api/image";
 import { uploadFile } from "@/src/lib/api/files";
@@ -89,13 +90,26 @@ const sanitizeAspectRatioInput = (value: string) => {
   return result;
 };
 
-const mapTaskOutputsToGeneratedOutputs = (taskId: string, outputs?: Array<{ id: string; file_path?: string | null; file_name?: string | null }>) =>
+const mapTaskOutputsToGeneratedOutputs = (
+  taskId: string,
+  outputs?: Array<{
+    id: string;
+    file_path?: string | null;
+    file_name?: string | null;
+    preview_url?: string | null;
+    thumbnail_url?: string | null;
+    lowres_url?: string | null;
+    original_url?: string | null;
+  }>,
+) =>
   outputs?.map((output) => {
-    const downloadUrl = getOutputDownloadUrl(taskId, output.id);
+    const downloadUrl = output.original_url || getOutputDownloadUrl(taskId, output.id);
+    const previewUrl = output.thumbnail_url || output.preview_url || output.lowres_url || undefined;
     return {
       id: output.id,
       kind: "image" as const,
-      url: downloadUrl,
+      url: previewUrl,
+      preview_url: previewUrl,
       downloadUrl,
       file_path: output.file_path || undefined,
       file_name: output.file_name || undefined,
@@ -279,7 +293,12 @@ export default function ImageWorkbenchPage() {
   };
 
   const getPreviewableOutputs = (outputs: GeneratedOutput[]) =>
-    outputs.filter((item) => Boolean(item.url) && item.status === "ready");
+    outputs
+      .filter((item) => Boolean(item.downloadUrl || item.url) && item.status === "ready")
+      .map((item) => ({
+        ...item,
+        url: item.url || item.downloadUrl,
+      }));
 
   const handleOpenPreviewById = (outputs: GeneratedOutput[], outputId: string) => {
     const previewableOutputs = getPreviewableOutputs(outputs);
@@ -681,13 +700,14 @@ export default function ImageWorkbenchPage() {
     async ({ conversationId, messageId, taskId }: { conversationId: string; messageId: string; taskId: string }) => {
       try {
         const task = await cancelTask(taskId);
-        const outputs = mapTaskOutputsToGeneratedOutputs(taskId, task.outputs);
+        const outputRes = task.output_count ? await getTaskOutputs(taskId, { page: 1, page_size: 100 }) : null;
+        const outputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes?.items);
         updateMessageById(conversationId, messageId, (message) => ({
           ...message,
           system_status: "cancelled",
           progress_current: task.progress_current ?? message.progress_current,
           progress_total: task.progress_total ?? message.progress_total,
-          progress_message: task.progress_message || "已停止",
+          progress_message: task.message || "已停止",
           generated_outputs: outputs.length ? outputs : message.generated_outputs,
         }));
       } catch (error) {
@@ -1154,18 +1174,18 @@ export default function ImageWorkbenchPage() {
                             key={output.id}
                             className="flex h-full flex-col rounded-lg border border-slate-200 bg-white p-1.5"
                           >
-                            {output.url ? (
-                              <div className="space-y-1.5">
+                            <div className="space-y-1.5">
+                              {output.preview_url ? (
                                 <button
                                   type="button"
                                   className="group relative block w-full overflow-hidden rounded-md border border-slate-200"
                                   onClick={() => handleOpenPreviewById(message.generated_outputs, output.id)}
-                                  aria-label="查看大图"
+                                  aria-label="查看原图"
                                 >
                                   <div className="aspect-[4/3] w-full overflow-hidden">
                                     <Image
-                                      src={output.url}
-                                      alt="生成结果"
+                                      src={output.preview_url}
+                                      alt="生成结果预览"
                                       width={768}
                                       height={576}
                                       className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.01]"
@@ -1173,17 +1193,19 @@ export default function ImageWorkbenchPage() {
                                     />
                                   </div>
                                 </button>
-                                <button
-                                  type="button"
-                                  className="text-xs font-medium text-slate-500 transition hover:text-slate-700"
-                                  onClick={() => handleOpenPreviewById(message.generated_outputs, output.id)}
-                                >
-                                  查看大图
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="aspect-[4/3] w-full rounded-md border border-slate-200 bg-slate-100/70" />
-                            )}
+                              ) : (
+                                <div className="flex aspect-[4/3] w-full items-center justify-center rounded-md border border-slate-200 bg-slate-100/70 text-xs text-slate-500">
+                                  仅展示预览信息
+                                </div>
+                              )}
+                              <button
+                                type="button"
+                                className="text-xs font-medium text-slate-500 transition hover:text-slate-700"
+                                onClick={() => handleOpenPreviewById(message.generated_outputs, output.id)}
+                              >
+                                查看原图
+                              </button>
+                            </div>
                             <div className="mt-auto flex items-center justify-end gap-2 pt-1.5">
                               <button
                                 type="button"
