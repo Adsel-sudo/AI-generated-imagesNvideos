@@ -10,6 +10,7 @@ from uuid import uuid4
 from sqlalchemy import func
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
+from PIL import Image
 from sqlmodel import Session, desc, select
 
 from .constants import DEFAULT_PROVIDER
@@ -35,6 +36,12 @@ from .tasks import generate_task
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_PIL_FORMAT_TO_MEDIA_TYPE: dict[str, str] = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "WEBP": "image/webp",
+}
 
 
 def _build_output_payload(task_id: str, output: Output) -> dict:
@@ -83,6 +90,15 @@ def _is_not_modified(request: Request, output_file: Path, etag: str) -> bool:
         except Exception:  # noqa: BLE001
             return False
     return False
+
+
+def _detect_media_type_by_content(output_file: Path) -> str | None:
+    try:
+        with Image.open(output_file) as image:
+            image_format = (image.format or "").upper()
+        return _PIL_FORMAT_TO_MEDIA_TYPE.get(image_format)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @router.get("/health")
@@ -363,7 +379,10 @@ def download_output(
     cache_headers = _build_cache_headers(output_file)
     if _is_not_modified(request, output_file, cache_headers["ETag"]):
         return Response(status_code=304, headers=cache_headers)
-    return FileResponse(path=output_file, media_type=output.mime_type, filename=output_file.name, headers=cache_headers)
+    content_media_type = _detect_media_type_by_content(output_file)
+    detected_media_type = mimetypes.guess_type(output_file.name)[0]
+    media_type = content_media_type or detected_media_type or output.mime_type or "application/octet-stream"
+    return FileResponse(path=output_file, media_type=media_type, filename=output_file.name, headers=cache_headers)
 
 
 @router.get("/api/tasks/{task_id}/download.zip")
