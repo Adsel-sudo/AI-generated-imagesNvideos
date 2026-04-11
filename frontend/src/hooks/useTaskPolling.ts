@@ -220,7 +220,6 @@ export function useTaskPolling(params: {
   }, [pollTaskAndSyncMessage]);
 
   useEffect(() => {
-    isUnmountedRef.current = false;
     for (const conversation of conversations) {
       for (const message of conversation.messages) {
         if (message.system_status !== "processing" || !message.task_id) continue;
@@ -231,10 +230,14 @@ export function useTaskPolling(params: {
         });
       }
     }
+  }, [conversations, startPollingTask]);
+
+  useEffect(() => {
+    isUnmountedRef.current = false;
     return () => {
       isUnmountedRef.current = true;
     };
-  }, [conversations, startPollingTask]);
+  }, []);
 
   return { startPollingTask };
 }
