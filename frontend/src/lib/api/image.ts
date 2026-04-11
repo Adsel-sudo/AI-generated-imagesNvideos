@@ -40,6 +40,10 @@ export function cancelTask(taskId: string) {
   });
 }
 
-export function getOutputDownloadUrl(taskId: string, outputId: string) {
-  return `${getApiBaseUrl()}/api/tasks/${taskId}/outputs/${outputId}`;
+export function getOutputDownloadUrl(taskId: string, outputId: string, params?: { download?: boolean }) {
+  const url = new URL(`${getApiBaseUrl()}/api/tasks/${taskId}/outputs/${outputId}`);
+  if (params?.download) {
+    url.searchParams.set("download", "1");
+  }
+  return url.toString();
 }
