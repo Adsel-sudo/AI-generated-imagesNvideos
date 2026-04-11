@@ -163,6 +163,16 @@ def generate_task(task_id: str):
                 nonlocal next_index
                 if task_type not in {TaskType.IMAGE.value, TaskType.VIDEO.value}:
                     return
+                if (item.file_type or "").lower() == "image":
+                    try:
+                        ensure_image_variants(Path(item.file_path))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "[task=%s][stage=ensure_variants][warn] file=%s err=%r",
+                            task_id,
+                            item.file_path,
+                            exc,
+                        )
                 output = Output(
                     task_id=task_id,
                     index=next_index,
@@ -185,8 +195,6 @@ def generate_task(task_id: str):
                 task.updated_at = utcnow()
                 session.add(task)
                 session.commit()
-                if (item.file_type or "").lower() == "image":
-                    ensure_image_variants(Path(item.file_path))
 
             for target_type, target_task in targets:
                 session.refresh(task)

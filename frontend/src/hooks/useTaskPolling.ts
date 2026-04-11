@@ -12,6 +12,8 @@ const HIDDEN_POLL_INTERVAL_MS = 15000;
 const UNCHANGED_SLOWDOWN_THRESHOLD = 3;
 const POLL_STALL_THRESHOLD_MS = 90000;
 const POLL_STALL_NOTICE = "处理时间较长，请稍后在当前对话中继续查看（任务仍在进行）";
+const MAX_CONSECUTIVE_POLL_ERRORS = 3;
+const TASK_OUTPUTS_PAGE_SIZE = 30;
 const TERMINAL_SUCCESS = new Set(["succeeded", "completed", "done"]);
 const TERMINAL_FAILED = new Set(["failed"]);
 const TERMINAL_CANCELLED = new Set(["cancelled"]);
@@ -62,6 +64,7 @@ export function useTaskPolling(params: {
     let stallNotified = false;
     let unchangedCount = 0;
     let cachedOutputs: GeneratedOutput[] = [];
+    let consecutivePollErrors = 0;
 
     const getNextPollInterval = (status: string, unchanged: number) => {
       if (typeof document !== "undefined" && document.hidden) {
@@ -76,6 +79,7 @@ export function useTaskPolling(params: {
     while (!isUnmountedRef.current) {
       try {
         const task = await getTaskDetail(taskId);
+        consecutivePollErrors = 0;
         const status = String(task.status || "").toLowerCase();
         const parsedProgressCurrent = Number(task.progress_current ?? 0);
         const progressCurrent = Number.isFinite(parsedProgressCurrent) ? Math.max(0, parsedProgressCurrent) : 0;
@@ -113,7 +117,7 @@ export function useTaskPolling(params: {
 
         const shouldSyncOutputs = outputCount > cachedOutputs.length || TERMINAL_SUCCESS.has(status) || TERMINAL_CANCELLED.has(status);
         if (shouldSyncOutputs && outputCount > 0) {
-          const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: 100 });
+          const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
           cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes.items);
           lastOutputCount = Math.max(lastOutputCount, cachedOutputs.length);
         }
@@ -181,24 +185,26 @@ export function useTaskPolling(params: {
             progress_current: progressCurrent || message.progress_current,
             progress_total: progressTotal || message.progress_total,
             progress_message: progressMessage,
-            generated_outputs: message.generated_outputs.map((output) => ({
-              ...output,
-              status: "failed",
-            })),
+            generated_outputs: cachedOutputs.length ? cachedOutputs : message.generated_outputs,
           }));
           return;
         }
       } catch (error) {
+        consecutivePollErrors += 1;
+        const reachedRetryLimit = consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS;
+
         updateMessageById(conversationId, messageId, (message) => ({
           ...message,
-          system_status: "error",
-          error_message: getFriendlyErrorMessage("result_failed", error),
-          generated_outputs: message.generated_outputs.map((output) => ({
-            ...output,
-            status: "failed",
-          })),
+          system_status: reachedRetryLimit ? "error" : "processing",
+          error_message: reachedRetryLimit ? getFriendlyErrorMessage("result_failed", error) : message.error_message,
+          generated_outputs: cachedOutputs.length ? cachedOutputs : message.generated_outputs,
         }));
-        return;
+
+        if (reachedRetryLimit) {
+          return;
+        }
+
+        await sleep(ACTIVE_POLL_INTERVAL_MS);
       }
     }
   }, [mapTaskOutputsToGeneratedOutputs, updateMessageById]);
