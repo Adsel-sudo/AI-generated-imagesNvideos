@@ -63,6 +63,17 @@
 - **Docker Compose**：本地/服务器场景可复用
 - **本地文件存储**：`data/` 下持久化上传、输出、zip、日志、数据库
 
+#### Nginx 大文件透传说明
+
+为降低大文件响应导致的磁盘 IO 抖动，Nginx 对以下下载/回显路径做了单独透传优化：
+
+- `^/api/tasks/{task_id}/outputs/{output_id}$`
+- `/api/files/{file_id}`（前缀 `/api/files/`）
+
+上述路径已关闭代理缓冲并禁用临时文件落盘（`proxy_buffering off`、`proxy_request_buffering off`、`proxy_max_temp_file_size 0`），并放宽读写超时（`300s`），避免出现 `an upstream response is buffered to a temporary file` 日志导致的性能抖动。
+
+普通 `/api/` 请求仍走通用 location，不受大文件透传策略影响。
+
 ---
 
 ## 4. 关于 AI 视频能力（暂停）
