@@ -103,14 +103,14 @@ const mapTaskOutputsToGeneratedOutputs = (
   }>,
 ) =>
   outputs?.map((output) => {
-    const downloadUrl = output.original_url || getOutputDownloadUrl(taskId, output.id);
+    const originalUrl = output.original_url || getOutputDownloadUrl(taskId, output.id);
+    const downloadUrl = getOutputDownloadUrl(taskId, output.id, { download: true });
     const thumbnailUrl = output.thumbnail_url || output.preview_url || output.lowres_url || undefined;
     const modalPreviewUrl = output.preview_url || thumbnailUrl;
-    const originalUrl = output.original_url || downloadUrl || modalPreviewUrl;
     return {
       id: output.id,
       kind: "image" as const,
-      url: originalUrl,
+      url: originalUrl || modalPreviewUrl,
       preview_url: thumbnailUrl,
       modal_preview_url: modalPreviewUrl,
       downloadUrl,

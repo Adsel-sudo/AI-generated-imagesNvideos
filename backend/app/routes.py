@@ -5,6 +5,7 @@ import zipfile
 from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 from sqlalchemy import func
@@ -99,6 +100,21 @@ def _detect_media_type_by_content(output_file: Path) -> str | None:
         return _PIL_FORMAT_TO_MEDIA_TYPE.get(image_format)
     except Exception:  # noqa: BLE001
         return None
+
+
+def _build_accel_redirect_path(output_file: Path) -> str:
+    outputs_root = settings.outputs_dir.resolve()
+    file_path = output_file.resolve()
+    try:
+        relative_path = file_path.relative_to(outputs_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid output path") from exc
+    return f"/_protected/outputs/{relative_path.as_posix()}"
+
+
+def _build_attachment_disposition(file_name: str) -> str:
+    quoted_name = quote(file_name)
+    return f"attachment; filename*=UTF-8''{quoted_name}"
 
 
 @router.get("/health")
@@ -358,6 +374,7 @@ def download_output(
     task_id: str,
     output_id: str,
     variant: str = Query(default="original"),
+    download: int = Query(default=0),
     _=Depends(require_login),
 ):
     with Session(engine) as session:
@@ -382,7 +399,12 @@ def download_output(
     content_media_type = _detect_media_type_by_content(output_file)
     detected_media_type = mimetypes.guess_type(output_file.name)[0]
     media_type = content_media_type or detected_media_type or output.mime_type or "application/octet-stream"
-    return FileResponse(path=output_file, media_type=media_type, filename=output_file.name, headers=cache_headers)
+    headers = dict(cache_headers)
+    headers["X-Accel-Redirect"] = _build_accel_redirect_path(output_file)
+    headers["Content-Type"] = media_type
+    if download == 1:
+        headers["Content-Disposition"] = _build_attachment_disposition(output_file.name)
+    return Response(status_code=200, headers=headers)
 
 
 @router.get("/api/tasks/{task_id}/download.zip")
