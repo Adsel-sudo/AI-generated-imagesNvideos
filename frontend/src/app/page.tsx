@@ -56,6 +56,7 @@ const REFERENCE_GROUPS: Array<{ label: string; key: ReferenceCategory; limit: nu
 const PANEL_SECTION_SPACING = "py-3";
 const OPTIONAL_BADGE_CLASS =
   "inline-flex items-center rounded-full border border-violet-200/70 bg-violet-50/70 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-500";
+const TASK_OUTPUTS_PAGE_SIZE = 30;
 
 const getSizeDisplayText = (size: string) => {
   if (size === "1:1") return "方图（1:1）";
@@ -736,7 +737,9 @@ export default function ImageWorkbenchPage() {
     async ({ conversationId, messageId, taskId }: { conversationId: string; messageId: string; taskId: string }) => {
       try {
         const task = await cancelTask(taskId);
-        const outputRes = task.output_count ? await getTaskOutputs(taskId, { page: 1, page_size: 100 }) : null;
+        const outputRes = task.output_count
+          ? await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE })
+          : null;
         const outputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes?.items);
         updateMessageById(conversationId, messageId, (message) => ({
           ...message,
