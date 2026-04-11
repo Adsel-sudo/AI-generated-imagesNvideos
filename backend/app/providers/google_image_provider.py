@@ -41,6 +41,18 @@ _ROLE_HINTS = {
     "reference": "Use this as a general semantic reference.",
 }
 
+_PIL_FORMAT_TO_MIME: dict[str, str] = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "WEBP": "image/webp",
+}
+
+_PREFERRED_EXT_BY_MIME: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+
 
 class GenerateContentCallError(RuntimeError):
     def __init__(self, error_type: str, index: int, original: Exception):
@@ -61,11 +73,26 @@ def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
         return default
 
 
+def _preferred_extension_for_mime(mime_type: str | None, fallback: str = ".png") -> str:
+    normalized = (mime_type or "").strip().lower()
+    if normalized in _PREFERRED_EXT_BY_MIME:
+        return _PREFERRED_EXT_BY_MIME[normalized]
+    return mimetypes.guess_extension(normalized) or fallback
+
+
 class GoogleImageProvider(BaseProvider):
     """Google image generation provider using the official google-genai SDK."""
 
     name = "google_image"
     supports_image = True
+
+    def _detect_image_mime_type(self, file_path: Path) -> str | None:
+        try:
+            with Image.open(file_path) as image:
+                image_format = (image.format or "").upper()
+            return _PIL_FORMAT_TO_MIME.get(image_format)
+        except Exception:  # noqa: BLE001
+            return None
 
     def _api_key(self) -> str:
         api_key = settings.google_genai_api_key
@@ -867,7 +894,10 @@ class GoogleImageProvider(BaseProvider):
                 if not saved:
                     continue
 
-                final_ext = mimetypes.guess_extension(mime_type) or ext or ".png"
+                detected_mime_type = self._detect_image_mime_type(file_path)
+                if detected_mime_type:
+                    mime_type = detected_mime_type
+                final_ext = _preferred_extension_for_mime(mime_type, fallback=ext or ".png")
                 if final_ext != file_path.suffix:
                     final_name = f"output_{index}{final_ext}"
                     final_path = output_dir / final_name

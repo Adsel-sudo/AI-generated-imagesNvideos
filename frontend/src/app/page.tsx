@@ -104,12 +104,15 @@ const mapTaskOutputsToGeneratedOutputs = (
 ) =>
   outputs?.map((output) => {
     const downloadUrl = output.original_url || getOutputDownloadUrl(taskId, output.id);
-    const previewUrl = output.thumbnail_url || output.preview_url || output.lowres_url || undefined;
+    const thumbnailUrl = output.thumbnail_url || output.preview_url || output.lowres_url || undefined;
+    const modalPreviewUrl = output.preview_url || thumbnailUrl;
+    const originalUrl = output.original_url || downloadUrl || modalPreviewUrl;
     return {
       id: output.id,
       kind: "image" as const,
-      url: previewUrl,
-      preview_url: previewUrl,
+      url: originalUrl,
+      preview_url: thumbnailUrl,
+      modal_preview_url: modalPreviewUrl,
       downloadUrl,
       file_path: output.file_path || undefined,
       file_name: output.file_name || undefined,
@@ -194,6 +197,17 @@ function getMessageStatusBadge(status: Conversation["messages"][number]["system_
   return "bg-amber-100/90 text-amber-700";
 }
 
+const triggerImageDownload = (downloadUrl: string, fileName?: string) => {
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = fileName || "";
+  link.rel = "noopener noreferrer";
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
 export default function ImageWorkbenchPage() {
   const {
     loading: authLoading,
@@ -253,7 +267,29 @@ export default function ImageWorkbenchPage() {
     if (!previewState) return null;
     return previewState.outputs[previewState.activeIndex] ?? null;
   }, [previewState]);
+  const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
   const previewHasMultiple = (previewState?.outputs.length || 0) > 1;
+
+  useEffect(() => {
+    if (!previewOutput) {
+      setPreviewImageSrc(null);
+      return;
+    }
+
+    const fallbackSrc = previewOutput.modal_preview_url || previewOutput.preview_url || previewOutput.url || null;
+    const originalSrc = previewOutput.url || null;
+    setPreviewImageSrc(fallbackSrc);
+
+    if (!originalSrc || originalSrc === fallbackSrc) {
+      return;
+    }
+
+    const preloader = new window.Image();
+    preloader.src = originalSrc;
+    preloader.onload = () => {
+      setPreviewImageSrc(originalSrc);
+    };
+  }, [previewOutput]);
 
   useEffect(() => {
     if (!openOptimizedPromptMessageId) return;
@@ -1220,7 +1256,10 @@ export default function ImageWorkbenchPage() {
                                 disabled={!output.downloadUrl}
                                 onClick={() => {
                                   if (!output.downloadUrl) return;
-                                  window.open(output.downloadUrl, "_blank", "noopener,noreferrer");
+                                  triggerImageDownload(
+                                    output.downloadUrl,
+                                    output.file_name || `generated_${output.id}.png`,
+                                  );
                                 }}
                                 className="text-xs font-medium text-violet-600 hover:text-violet-700 disabled:cursor-not-allowed disabled:text-slate-400"
                               >
@@ -1282,7 +1321,7 @@ export default function ImageWorkbenchPage() {
         />
       </div>
 
-      {previewState && previewOutput?.url ? (
+      {previewState && (previewImageSrc || previewOutput?.url) ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-3 py-4 backdrop-blur-[1px]"
           onClick={handleClosePreview}
@@ -1326,7 +1365,7 @@ export default function ImageWorkbenchPage() {
 
             <div className="max-h-[78vh] overflow-hidden rounded-xl bg-slate-950/30">
               <Image
-                src={previewOutput.url}
+                src={previewImageSrc || previewOutput?.url || ""}
                 alt="预览大图"
                 width={1600}
                 height={1200}
@@ -1344,7 +1383,10 @@ export default function ImageWorkbenchPage() {
                 disabled={!previewOutput.downloadUrl}
                 onClick={() => {
                   if (!previewOutput.downloadUrl) return;
-                  window.open(previewOutput.downloadUrl, "_blank", "noopener,noreferrer");
+                  triggerImageDownload(
+                    previewOutput.downloadUrl,
+                    previewOutput.file_name || `generated_${previewOutput.id}.png`,
+                  );
                 }}
                 className="inline-flex items-center rounded-lg bg-violet-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-slate-500"
               >
