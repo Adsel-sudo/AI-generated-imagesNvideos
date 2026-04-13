@@ -105,17 +105,32 @@ const mapTaskOutputsToGeneratedOutputs = (
 ) =>
   (() => {
     try {
-      const base = getApiBaseUrl();
+      const apiBase = getApiBaseUrl();
+      const base = apiBase || (typeof window !== "undefined" ? window.location.origin : "");
+      const resolveUrl = (raw?: string | null) => {
+        if (!raw) return "";
+        if (/^[a-z][a-z\d+\-.]*:/i.test(raw) || raw.startsWith("//")) {
+          return raw;
+        }
+        if (!base) {
+          return raw.startsWith("/") ? raw : `/${raw}`;
+        }
+        try {
+          return new URL(raw, base).toString();
+        } catch {
+          return raw.startsWith("/") ? raw : `/${raw}`;
+        }
+      };
       return (
         outputs?.map((output) => {
           const originalUrlRaw = output.original_url || getOutputDownloadUrl(taskId, output.id);
-          const originalUrl = originalUrlRaw ? new URL(originalUrlRaw, base).toString() : "";
+          const originalUrl = resolveUrl(originalUrlRaw);
           const downloadUrl = getOutputDownloadUrl(taskId, output.id, { download: true });
           const previewUrl =
-            (output.preview_url ? new URL(output.preview_url, base).toString() : "") ||
-            (output.thumbnail_url ? new URL(output.thumbnail_url, base).toString() : "") ||
-            (output.lowres_url ? new URL(output.lowres_url, base).toString() : "") ||
-            (output.original_url ? new URL(output.original_url, base).toString() : "") ||
+            resolveUrl(output.preview_url) ||
+            resolveUrl(output.thumbnail_url) ||
+            resolveUrl(output.lowres_url) ||
+            resolveUrl(output.original_url) ||
             originalUrl;
           const modalPreviewUrl = previewUrl;
           return {
@@ -143,15 +158,32 @@ const resolveStablePreviewUrl = (params: {
   backendUrl?: string;
   fallbackObjectUrl?: string;
 }) => {
+  const apiBase = getApiBaseUrl();
+  const base = apiBase || (typeof window !== "undefined" ? window.location.origin : "");
+
   if (params.backendUrl) {
-    if (/^https?:\/\//i.test(params.backendUrl)) {
+    if (/^[a-z][a-z\d+\-.]*:/i.test(params.backendUrl) || params.backendUrl.startsWith("//")) {
       return params.backendUrl;
     }
-    return `${getApiBaseUrl()}${params.backendUrl.startsWith("/") ? "" : "/"}${params.backendUrl}`;
+    if (!base) {
+      return params.backendUrl.startsWith("/") ? params.backendUrl : `/${params.backendUrl}`;
+    }
+    try {
+      return new URL(params.backendUrl, base).toString();
+    } catch {
+      return params.backendUrl.startsWith("/") ? params.backendUrl : `/${params.backendUrl}`;
+    }
   }
 
   if (params.fileId) {
-    return `${getApiBaseUrl()}/api/files/${params.fileId}`;
+    if (!base) {
+      return `/api/files/${params.fileId}`;
+    }
+    try {
+      return new URL(`/api/files/${params.fileId}`, base).toString();
+    } catch {
+      return `/api/files/${params.fileId}`;
+    }
   }
 
   if (params.filePath) {
@@ -160,7 +192,14 @@ const resolveStablePreviewUrl = (params: {
     const extIndex = filename.lastIndexOf(".");
     const fileIdFromPath = extIndex > 0 ? filename.slice(0, extIndex) : filename;
     if (fileIdFromPath) {
-      return `${getApiBaseUrl()}/api/files/${fileIdFromPath}`;
+      if (!base) {
+        return `/api/files/${fileIdFromPath}`;
+      }
+      try {
+        return new URL(`/api/files/${fileIdFromPath}`, base).toString();
+      } catch {
+        return `/api/files/${fileIdFromPath}`;
+      }
     }
   }
 

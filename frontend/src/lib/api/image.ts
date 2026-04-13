@@ -40,10 +40,27 @@ export function cancelTask(taskId: string) {
   });
 }
 
-export function getOutputDownloadUrl(taskId: string, outputId: string, params?: { download?: boolean }) {
-  const url = new URL(`${getApiBaseUrl()}/api/tasks/${taskId}/outputs/${outputId}`);
-  if (params?.download) {
-    url.searchParams.set("download", "1");
+export function getOutputDownloadUrl(
+  taskId: string,
+  outputId: string,
+  params?: { download?: boolean },
+) {
+  const path = `/api/tasks/${taskId}/outputs/${outputId}`;
+
+  const apiBase = getApiBaseUrl();
+  const base = apiBase || (typeof window !== "undefined" ? window.location.origin : "");
+
+  if (!base) {
+    return params?.download ? `${path}?download=1` : path;
   }
-  return url.toString();
+
+  try {
+    const url = new URL(path, base);
+    if (params?.download) {
+      url.searchParams.set("download", "1");
+    }
+    return url.toString();
+  } catch {
+    return params?.download ? `${path}?download=1` : path;
+  }
 }
