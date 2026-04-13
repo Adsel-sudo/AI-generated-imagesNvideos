@@ -103,28 +103,39 @@ const mapTaskOutputsToGeneratedOutputs = (
     original_url?: string | null;
   }>,
 ) =>
-  outputs?.map((output) => {
-    const originalUrl = output.original_url || getOutputDownloadUrl(taskId, output.id);
-    const downloadUrl = getOutputDownloadUrl(taskId, output.id, { download: true });
-    const previewUrl =
-      output.preview_url ||
-      output.thumbnail_url ||
-      output.lowres_url ||
-      output.original_url ||
-      originalUrl;
-    const modalPreviewUrl = previewUrl;
-    return {
-      id: output.id,
-      kind: "image" as const,
-      url: originalUrl,
-      preview_url: previewUrl,
-      modal_preview_url: modalPreviewUrl,
-      downloadUrl,
-      file_path: output.file_path || undefined,
-      file_name: output.file_name || undefined,
-      status: "ready" as const,
-    };
-  }) ?? [];
+  (() => {
+    try {
+      const base = getApiBaseUrl();
+      return (
+        outputs?.map((output) => {
+          const originalUrlRaw = output.original_url || getOutputDownloadUrl(taskId, output.id);
+          const originalUrl = originalUrlRaw ? new URL(originalUrlRaw, base).toString() : "";
+          const downloadUrl = getOutputDownloadUrl(taskId, output.id, { download: true });
+          const previewUrl =
+            (output.preview_url ? new URL(output.preview_url, base).toString() : "") ||
+            (output.thumbnail_url ? new URL(output.thumbnail_url, base).toString() : "") ||
+            (output.lowres_url ? new URL(output.lowres_url, base).toString() : "") ||
+            (output.original_url ? new URL(output.original_url, base).toString() : "") ||
+            originalUrl;
+          const modalPreviewUrl = previewUrl;
+          return {
+            id: output.id,
+            kind: "image" as const,
+            url: originalUrl,
+            preview_url: previewUrl,
+            modal_preview_url: modalPreviewUrl,
+            downloadUrl,
+            file_path: output.file_path || undefined,
+            file_name: output.file_name || undefined,
+            status: "ready" as const,
+          };
+        }) ?? []
+      );
+    } catch (e) {
+      console.error("[mapTaskOutputs error]", e, outputs);
+      return [];
+    }
+  })();
 
 const resolveStablePreviewUrl = (params: {
   fileId?: string;

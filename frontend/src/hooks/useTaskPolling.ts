@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { getTaskDetail, getTaskOutputs } from "@/src/lib/api/image";
+import { getTaskDetail } from "@/src/lib/api/image";
 import { getFriendlyErrorMessage } from "@/src/lib/error-mapping";
 import type { Conversation } from "@/src/types/conversation";
 import type { GeneratedOutput } from "@/src/types/conversation";
@@ -157,9 +157,20 @@ export function useTaskPolling(params: {
           (outputCount > 0 || TERMINAL_SUCCESS.has(status) || TERMINAL_CANCELLED.has(status));
         if (shouldFetchOutputs) {
           try {
-            const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
+            const rawResponse = await fetch(
+              `/api/tasks/${taskId}/outputs?page=1&page_size=${TASK_OUTPUTS_PAGE_SIZE}`,
+              {
+                credentials: "include",
+              },
+            );
+
+            if (!rawResponse.ok) {
+              throw new Error(`getTaskOutputs failed: ${rawResponse.status}`);
+            }
+
+            const outputRes = await rawResponse.json();
             if (cancelledTaskIdsRef.current.has(taskId)) return;
-            cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes.items);
+            cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes?.items ?? []);
             lastOutputCount = Math.max(lastOutputCount, cachedOutputs.length);
             if (taskId === "fb73bbe6-d8c6-48ff-b1e5-826e461d934d") {
               console.log(
@@ -195,14 +206,24 @@ export function useTaskPolling(params: {
             console.log("[poll task status raw]", task.status);
             console.log("[poll task status normalized]", status);
           } catch (error) {
-            console.error("[poll-progress-fetch-outputs-error]", {
-              taskId,
-              conversationId,
-              messageId,
-              status,
-              outputCount,
-              error,
-            });
+            console.error(
+              "[poll-progress-fetch-outputs-error]",
+              JSON.stringify(
+                {
+                  taskId,
+                  error:
+                    error instanceof Error
+                      ? {
+                          name: error.name,
+                          message: error.message,
+                          stack: error.stack,
+                        }
+                      : String(error),
+                },
+                null,
+                2,
+              ),
+            );
           }
         }
 
@@ -253,16 +274,39 @@ export function useTaskPolling(params: {
           let finalOutputs = cachedOutputs;
 
           try {
-            const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
+            const rawResponse = await fetch(
+              `/api/tasks/${taskId}/outputs?page=1&page_size=${TASK_OUTPUTS_PAGE_SIZE}`,
+              {
+                credentials: "include",
+              },
+            );
+
+            if (!rawResponse.ok) {
+              throw new Error(`getTaskOutputs failed: ${rawResponse.status}`);
+            }
+
+            const outputRes = await rawResponse.json();
             if (cancelledTaskIdsRef.current.has(taskId)) return;
             finalOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes?.items ?? []);
           } catch (error) {
-            console.error("[poll-success-fetch-outputs-error]", {
-              taskId,
-              conversationId,
-              messageId,
-              error,
-            });
+            console.error(
+              "[poll-success-fetch-outputs-error]",
+              JSON.stringify(
+                {
+                  taskId,
+                  error:
+                    error instanceof Error
+                      ? {
+                          name: error.name,
+                          message: error.message,
+                          stack: error.stack,
+                        }
+                      : String(error),
+                },
+                null,
+                2,
+              ),
+            );
           }
 
           const finalOutputCount = Math.max(finalOutputs.length, outputCount, progressCurrent);
