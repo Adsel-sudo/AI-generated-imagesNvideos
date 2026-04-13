@@ -155,6 +155,16 @@ export function useTaskPolling(params: {
           console.log("[poll raw outputRes]", outputRes);
           console.log("[poll raw items]", outputRes?.items);
           console.log("[poll mapped outputs]", cachedOutputs);
+          console.log(
+            "[poll mapped outputs urls]",
+            cachedOutputs.map((item) => ({
+              id: item.id,
+              status: item.status,
+              preview_url: item.preview_url,
+              modal_preview_url: item.modal_preview_url,
+              url: item.url,
+            })),
+          );
           console.log("[poll cachedOutputs.length]", cachedOutputs.length);
           console.log("[poll task status raw]", task.status);
           console.log("[poll task status normalized]", status);

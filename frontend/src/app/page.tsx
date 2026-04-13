@@ -106,18 +106,18 @@ const mapTaskOutputsToGeneratedOutputs = (
   outputs?.map((output) => {
     const originalUrl = output.original_url || getOutputDownloadUrl(taskId, output.id);
     const downloadUrl = getOutputDownloadUrl(taskId, output.id, { download: true });
-    const thumbnailUrl =
-      output.thumbnail_url ||
+    const previewUrl =
       output.preview_url ||
+      output.thumbnail_url ||
       output.lowres_url ||
       output.original_url ||
-      undefined;
-    const modalPreviewUrl = output.preview_url || output.thumbnail_url || output.original_url || thumbnailUrl;
+      originalUrl;
+    const modalPreviewUrl = previewUrl;
     return {
       id: output.id,
       kind: "image" as const,
-      url: originalUrl || modalPreviewUrl,
-      preview_url: thumbnailUrl,
+      url: originalUrl,
+      preview_url: previewUrl,
       modal_preview_url: modalPreviewUrl,
       downloadUrl,
       file_path: output.file_path || undefined,
@@ -1124,8 +1124,11 @@ export default function ImageWorkbenchPage() {
               <div className="space-y-2.5 pb-1">
                 {activeConversation?.messages.map((message, index) => {
                   const readyOutputs = message.generated_outputs.filter((item) => item.status === "ready");
-                  const hasReadyOutputs = readyOutputs.length > 0;
-                  const showLoadingState = message.system_status === "processing" && !hasReadyOutputs;
+                  const displayOutputs = readyOutputs.filter((item) =>
+                    Boolean(item.preview_url || item.modal_preview_url || item.url),
+                  );
+                  const showLoadingState =
+                    message.system_status === "processing" && displayOutputs.length === 0;
 
                   return (
                 <article
@@ -1212,7 +1215,7 @@ export default function ImageWorkbenchPage() {
                     {showLoadingState ? (
                       <div className="rounded-xl border border-slate-200/80 bg-white/75 p-2">
                         <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                          {[0, 1, 2].map((placeholder) => (
+                          {Array.from({ length: Math.max(1, message.progress_total || 2) }).map((_, placeholder) => (
                             <div
                               key={placeholder}
                               className="animate-pulse rounded-lg border border-slate-200 bg-white p-1.5"
@@ -1225,7 +1228,7 @@ export default function ImageWorkbenchPage() {
                       </div>
                     ) : (
                       <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                        {readyOutputs.map((output) => (
+                        {displayOutputs.map((output) => (
                           <div
                             key={output.id}
                             className="flex h-full flex-col rounded-lg border border-slate-200 bg-white p-1.5"
@@ -1237,7 +1240,7 @@ export default function ImageWorkbenchPage() {
                                 <button
                                   type="button"
                                   className="group relative block w-full overflow-hidden rounded-md border border-slate-200"
-                                  onClick={() => handleOpenPreviewById(readyOutputs, output.id)}
+                                  onClick={() => handleOpenPreviewById(displayOutputs, output.id)}
                                   aria-label="查看原图"
                                 >
                                   <div className="aspect-[4/3] w-full overflow-hidden">
@@ -1260,7 +1263,7 @@ export default function ImageWorkbenchPage() {
                               <button
                                 type="button"
                                 className="text-xs font-medium text-slate-500 transition hover:text-slate-700"
-                                onClick={() => handleOpenPreviewById(readyOutputs, output.id)}
+                                onClick={() => handleOpenPreviewById(displayOutputs, output.id)}
                               >
                                 查看原图
                               </button>
