@@ -1391,12 +1391,13 @@ export default function ImageWorkbenchPage() {
               </div>
               <button
                 type="button"
-                disabled={!previewOutput.downloadUrl}
+                disabled={!previewOutput?.downloadUrl}
                 onClick={() => {
-                  if (!previewOutput.downloadUrl) return;
+                  const out = previewOutput;
+                  if (!out?.downloadUrl) return;
                   triggerImageDownload(
-                    previewOutput.downloadUrl,
-                    previewOutput.file_name || `generated_${previewOutput.id}.png`,
+                    out.downloadUrl,
+                    out.file_name || `generated_${out.id}.png`,
                   );
                 }}
                 className="inline-flex items-center rounded-lg bg-violet-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-slate-500"
