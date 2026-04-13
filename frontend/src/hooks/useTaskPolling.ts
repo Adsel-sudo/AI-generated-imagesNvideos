@@ -97,6 +97,12 @@ export function useTaskPolling(params: {
     };
 
     while (!isUnmountedRef.current) {
+      if (taskId === "fb73bbe6-d8c6-48ff-b1e5-826e461d934d") {
+        console.log(
+          "[poll-early-current]",
+          JSON.stringify({ taskId, conversationId, messageId }, null, 2),
+        );
+      }
       if (cancelledTaskIdsRef.current.has(taskId)) return;
       try {
         const task = await getTaskDetail(taskId);
@@ -154,6 +160,23 @@ export function useTaskPolling(params: {
           if (cancelledTaskIdsRef.current.has(taskId)) return;
           cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes.items);
           lastOutputCount = Math.max(lastOutputCount, cachedOutputs.length);
+          if (taskId === "fb73bbe6-d8c6-48ff-b1e5-826e461d934d") {
+            console.log(
+              "[poll-debug-current]",
+              JSON.stringify(
+                {
+                  taskId,
+                  taskStatus: task.status,
+                  progressCurrent,
+                  progressTotal,
+                  outputRes,
+                  cachedOutputs,
+                },
+                null,
+                2,
+              ),
+            );
+          }
           console.log("[poll raw outputRes]", outputRes);
           console.log("[poll raw items]", outputRes?.items);
           console.log("[poll mapped outputs]", cachedOutputs);
@@ -185,6 +208,22 @@ export function useTaskPolling(params: {
           const syncedProgressCurrent = Math.max(progressCurrent, cachedOutputs.length);
           const syncedProgressTotal = Math.max(progressTotal, syncedProgressCurrent);
 
+          console.log(
+            "[update-source] polling:progress",
+            JSON.stringify(
+              {
+                conversationId,
+                messageId,
+                taskId,
+                status,
+                syncedProgressCurrent,
+                syncedProgressTotal,
+                cachedOutputsLength: cachedOutputs.length,
+              },
+              null,
+              2,
+            ),
+          );
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
             progress_current: syncedProgressCurrent,
@@ -200,24 +239,52 @@ export function useTaskPolling(params: {
         }
 
         if (isTerminalSuccess) {
-          const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
-          if (cancelledTaskIdsRef.current.has(taskId)) return;
-          cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes.items);
-          const finalOutputCount = Math.max(cachedOutputs.length, outputCount);
-          const finalProgressTotal = Math.max(progressTotal, finalOutputCount);
+          let finalOutputs = cachedOutputs;
+
+          try {
+            const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
+            if (cancelledTaskIdsRef.current.has(taskId)) return;
+            finalOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes?.items ?? []);
+          } catch (error) {
+            console.error("[poll-success-fetch-outputs-error]", {
+              taskId,
+              conversationId,
+              messageId,
+              error,
+            });
+          }
+
+          const finalOutputCount = Math.max(finalOutputs.length, outputCount, progressCurrent);
+          const finalProgressTotal = Math.max(progressTotal, finalOutputCount, 1);
           const finalProgressCurrent = Math.max(progressCurrent, finalOutputCount);
+          console.log("[update-source] polling:done", {
+            conversationId,
+            messageId,
+            taskId,
+            finalProgressCurrent,
+            finalProgressTotal,
+            finalOutputsLength: finalOutputs.length,
+          });
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
             system_status: "done",
-            progress_current: finalProgressCurrent || message.progress_current || 0,
-            progress_total: finalProgressTotal || message.progress_total || 0,
-            progress_message: progressMessage,
-            generated_outputs: cachedOutputs,
+            progress_current: finalProgressCurrent,
+            progress_total: finalProgressTotal,
+            progress_message: progressMessage || `已完成 ${finalProgressCurrent}/${finalProgressTotal}`,
+            generated_outputs: finalOutputs,
           }));
           return;
         }
 
         if (TERMINAL_CANCELLED.has(status)) {
+          console.log("[update-source] polling:cancelled", {
+            conversationId,
+            messageId,
+            taskId,
+            progressCurrent,
+            progressTotal,
+            cachedOutputsLength: cachedOutputs.length,
+          });
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
             system_status: "cancelled",
@@ -235,6 +302,14 @@ export function useTaskPolling(params: {
               ? task.error.trim()
               : getFriendlyErrorMessage("generation_failed");
           const failedReason = getFriendlyErrorMessage("generation_failed", failedReasonRaw);
+          console.log("[update-source] polling:failed", {
+            conversationId,
+            messageId,
+            taskId,
+            progressCurrent,
+            progressTotal,
+            cachedOutputsLength: cachedOutputs.length,
+          });
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
             system_status: "error",
@@ -247,6 +322,13 @@ export function useTaskPolling(params: {
           return;
         }
       } catch (error) {
+        console.error("[poll-error]", {
+          taskId,
+          conversationId,
+          messageId,
+          error,
+        });
+
         if (cancelledTaskIdsRef.current.has(taskId)) return;
         consecutivePollErrors += 1;
         const reachedRetryLimit = consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS;
@@ -255,6 +337,8 @@ export function useTaskPolling(params: {
           ...message,
           system_status: reachedRetryLimit ? "error" : "processing",
           error_message: reachedRetryLimit ? getFriendlyErrorMessage("result_failed", error) : message.error_message,
+          progress_current: lastProgressCurrent || message.progress_current,
+          progress_total: lastProgressTotal || message.progress_total,
           generated_outputs: cachedOutputs,
         }));
 

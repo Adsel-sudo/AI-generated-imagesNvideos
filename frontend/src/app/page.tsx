@@ -435,8 +435,31 @@ export default function ImageWorkbenchPage() {
     messageId: string,
     updater: (message: Conversation["messages"][number]) => Conversation["messages"][number],
   ) => {
-    setConversations((prev) =>
-      prev.map((conversation) => {
+    console.log(
+      "[updateMessageById-call]",
+      JSON.stringify({ conversationId, messageId }, null, 2),
+    );
+    setConversations((prev) => {
+      console.log(
+        "[updateMessageById-prev]",
+        JSON.stringify(
+          prev.map((conversation) => ({
+            conversation_id: conversation.conversation_id,
+            messages: conversation.messages.map((message) => ({
+              id: message.id,
+              task_id: message.task_id,
+              system_status: message.system_status,
+              progress_current: message.progress_current,
+              progress_total: message.progress_total,
+              generated_outputs_count: message.generated_outputs.length,
+            })),
+          })),
+          null,
+          2,
+        ),
+      );
+
+      const next = prev.map((conversation) => {
         if (conversation.conversation_id !== conversationId) return conversation;
         return {
           ...conversation,
@@ -445,8 +468,26 @@ export default function ImageWorkbenchPage() {
             message.id === messageId ? updater(message) : message,
           ),
         };
-      }),
-    );
+      });
+
+      const hitConversation = next.find((c) => c.conversation_id === conversationId);
+      const hitMessage = hitConversation?.messages.find((m) => m.id === messageId);
+
+      console.log(
+        "[updateMessageById-after]",
+        JSON.stringify(
+          {
+            conversationId,
+            messageId,
+            hitMessage,
+          },
+          null,
+          2,
+        ),
+      );
+
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -914,6 +955,12 @@ export default function ImageWorkbenchPage() {
         throw new Error("missing_task_id");
       }
 
+      console.log("[update-source] submit:set-task-id", {
+        conversationId: selectedConversationId,
+        messageId: message.id,
+        taskId,
+      });
+
       updateMessageById(selectedConversationId, message.id, (item) => ({
         ...item,
         task_id: taskId,
@@ -1166,27 +1213,29 @@ export default function ImageWorkbenchPage() {
                   const showLoadingState =
                     message.system_status === "processing" && displayOutputs.length === 0;
 
-                  console.log(
-                    "[render-debug]",
-                    JSON.stringify(
-                      {
-                        messageId: message.id,
-                        taskId: message.task_id,
-                        systemStatus: message.system_status,
-                        progressCurrent: message.progress_current,
-                        progressTotal: message.progress_total,
-                        generatedOutputs: message.generated_outputs,
-                        readyOutputs: message.generated_outputs.filter((item) => item.status === "ready"),
-                        displayOutputs: message.generated_outputs.filter(
-                          (item) =>
-                            item.status === "ready" &&
-                            Boolean(item.preview_url || item.modal_preview_url || item.url),
-                        ),
-                      },
-                      null,
-                      2,
-                    ),
-                  );
+                  if (message.task_id === "fb73bbe6-d8c6-48ff-b1e5-826e461d934d") {
+                    console.log(
+                      "[render-debug-current]",
+                      JSON.stringify(
+                        {
+                          messageId: message.id,
+                          taskId: message.task_id,
+                          systemStatus: message.system_status,
+                          progressCurrent: message.progress_current,
+                          progressTotal: message.progress_total,
+                          generatedOutputs: message.generated_outputs,
+                          readyOutputs: message.generated_outputs.filter((item) => item.status === "ready"),
+                          displayOutputs: message.generated_outputs.filter(
+                            (item) =>
+                              item.status === "ready" &&
+                              Boolean(item.preview_url || item.modal_preview_url || item.url),
+                          ),
+                        },
+                        null,
+                        2,
+                      ),
+                    );
+                  }
 
                   return (
                 <article
