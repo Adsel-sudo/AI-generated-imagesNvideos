@@ -732,7 +732,7 @@ export default function ImageWorkbenchPage() {
     );
   }, []);
 
-  const { startPollingTask } = useTaskPolling({
+  const { startPollingTask, stopPollingTask } = useTaskPolling({
     conversations,
     updateMessageById,
     mapTaskOutputsToGeneratedOutputs,
@@ -741,6 +741,13 @@ export default function ImageWorkbenchPage() {
   const handleCancelTask = useCallback(
     async ({ conversationId, messageId, taskId }: { conversationId: string; messageId: string; taskId: string }) => {
       try {
+        stopPollingTask(taskId);
+        updateMessageById(conversationId, messageId, (message) => ({
+          ...message,
+          system_status: "cancelled",
+          progress_message: "已停止",
+        }));
+
         const task = await cancelTask(taskId);
         const outputRes = task.output_count
           ? await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE })
@@ -761,7 +768,7 @@ export default function ImageWorkbenchPage() {
         }));
       }
     },
-    [updateMessageById],
+    [stopPollingTask, updateMessageById],
   );
 
   const handleSubmitTask = async () => {
@@ -1115,7 +1122,12 @@ export default function ImageWorkbenchPage() {
           >
             {hasMessages ? (
               <div className="space-y-2.5 pb-1">
-                {activeConversation?.messages.map((message, index) => (
+                {activeConversation?.messages.map((message, index) => {
+                  const readyOutputs = message.generated_outputs.filter((item) => item.status === "ready");
+                  const hasReadyOutputs = readyOutputs.length > 0;
+                  const showLoadingState = message.system_status === "processing" && !hasReadyOutputs;
+
+                  return (
                 <article
                   key={message.id}
                   ref={index === activeConversation.messages.length - 1 ? currentMessageRef : null}
@@ -1197,7 +1209,7 @@ export default function ImageWorkbenchPage() {
                         </div>
                       </div>
                     )}
-                    {message.system_status === "processing" && message.generated_outputs.length === 0 ? (
+                    {showLoadingState ? (
                       <div className="rounded-xl border border-slate-200/80 bg-white/75 p-2">
                         <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                           {[0, 1, 2].map((placeholder) => (
@@ -1213,7 +1225,7 @@ export default function ImageWorkbenchPage() {
                       </div>
                     ) : (
                       <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                        {message.generated_outputs.map((output) => (
+                        {readyOutputs.map((output) => (
                           <div
                             key={output.id}
                             className="flex h-full flex-col rounded-lg border border-slate-200 bg-white p-1.5"
@@ -1225,7 +1237,7 @@ export default function ImageWorkbenchPage() {
                                 <button
                                   type="button"
                                   className="group relative block w-full overflow-hidden rounded-md border border-slate-200"
-                                  onClick={() => handleOpenPreviewById(message.generated_outputs, output.id)}
+                                  onClick={() => handleOpenPreviewById(readyOutputs, output.id)}
                                   aria-label="查看原图"
                                 >
                                   <div className="aspect-[4/3] w-full overflow-hidden">
@@ -1248,7 +1260,7 @@ export default function ImageWorkbenchPage() {
                               <button
                                 type="button"
                                 className="text-xs font-medium text-slate-500 transition hover:text-slate-700"
-                                onClick={() => handleOpenPreviewById(message.generated_outputs, output.id)}
+                                onClick={() => handleOpenPreviewById(readyOutputs, output.id)}
                               >
                                 查看原图
                               </button>
@@ -1283,7 +1295,8 @@ export default function ImageWorkbenchPage() {
                     )}
                   </div>
                 </article>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="flex min-h-[220px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-100/70 px-4 text-sm text-slate-500">

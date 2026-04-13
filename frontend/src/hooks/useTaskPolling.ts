@@ -14,10 +14,26 @@ const POLL_STALL_THRESHOLD_MS = 90000;
 const POLL_STALL_NOTICE = "处理时间较长，请稍后在当前对话中继续查看（任务仍在进行）";
 const MAX_CONSECUTIVE_POLL_ERRORS = 3;
 const TASK_OUTPUTS_PAGE_SIZE = 30;
-const TERMINAL_SUCCESS = new Set(["succeeded", "completed", "done", "success", "finished", "complete"]);
+const TERMINAL_SUCCESS = new Set([
+  "done",
+  // 兼容历史/第三方状态
+  "succeeded",
+  "completed",
+  "success",
+  "finished",
+  "complete",
+]);
 const TERMINAL_FAILED = new Set(["failed"]);
 const TERMINAL_CANCELLED = new Set(["cancelled"]);
-const ACTIVE_STATUSES = new Set(["pending", "running"]);
+const ACTIVE_STATUSES = new Set([
+  // 与后端 TaskStatus 对齐
+  "queued",
+  "running",
+  "saving",
+  // 兼容历史/第三方状态
+  "pending",
+  "processing",
+]);
 
 const sleep = (ms: number) =>
   new Promise((resolve) => {
@@ -45,6 +61,7 @@ export function useTaskPolling(params: {
   ) => GeneratedOutput[];
 }) {
   const pollingTaskIdsRef = useRef<Set<string>>(new Set());
+  const cancelledTaskIdsRef = useRef<Set<string>>(new Set());
   const isUnmountedRef = useRef(false);
   const { conversations, updateMessageById, mapTaskOutputsToGeneratedOutputs } = params;
 
@@ -78,10 +95,19 @@ export function useTaskPolling(params: {
     };
 
     while (!isUnmountedRef.current) {
+      if (cancelledTaskIdsRef.current.has(taskId)) return;
       try {
         const task = await getTaskDetail(taskId);
+        if (cancelledTaskIdsRef.current.has(taskId)) return;
         consecutivePollErrors = 0;
         const status = String(task.status || "").toLowerCase();
+        console.log("[poll status snapshot]", {
+          taskId,
+          status,
+          outputCount: task.output_count,
+          progressCurrent: task.progress_current,
+          progressTotal: task.progress_total,
+        });
         const parsedProgressCurrent = Number(task.progress_current ?? 0);
         const progressCurrent = Number.isFinite(parsedProgressCurrent) ? Math.max(0, parsedProgressCurrent) : 0;
         const parsedProgressTotal = Number(task.progress_total ?? 0);
@@ -123,11 +149,13 @@ export function useTaskPolling(params: {
           (outputCount > 0 || TERMINAL_SUCCESS.has(status) || TERMINAL_CANCELLED.has(status));
         if (shouldFetchOutputs) {
           const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
+          if (cancelledTaskIdsRef.current.has(taskId)) return;
           cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes.items);
           lastOutputCount = Math.max(lastOutputCount, cachedOutputs.length);
           console.log("[poll raw outputRes]", outputRes);
           console.log("[poll raw items]", outputRes?.items);
           console.log("[poll mapped outputs]", cachedOutputs);
+          console.log("[poll cachedOutputs.length]", cachedOutputs.length);
           console.log("[poll task status raw]", task.status);
           console.log("[poll task status normalized]", status);
         }
@@ -204,6 +232,7 @@ export function useTaskPolling(params: {
           return;
         }
       } catch (error) {
+        if (cancelledTaskIdsRef.current.has(taskId)) return;
         consecutivePollErrors += 1;
         const reachedRetryLimit = consecutivePollErrors >= MAX_CONSECUTIVE_POLL_ERRORS;
 
@@ -224,6 +253,7 @@ export function useTaskPolling(params: {
   }, [mapTaskOutputsToGeneratedOutputs, updateMessageById]);
 
   const startPollingTask = useCallback((task: { conversationId: string; messageId: string; taskId: string }) => {
+    cancelledTaskIdsRef.current.delete(task.taskId);
     if (pollingTaskIdsRef.current.has(task.taskId)) {
       return;
     }
@@ -232,6 +262,11 @@ export function useTaskPolling(params: {
       pollingTaskIdsRef.current.delete(task.taskId);
     });
   }, [pollTaskAndSyncMessage]);
+
+  const stopPollingTask = useCallback((taskId: string) => {
+    cancelledTaskIdsRef.current.add(taskId);
+    pollingTaskIdsRef.current.delete(taskId);
+  }, []);
 
   useEffect(() => {
     for (const conversation of conversations) {
@@ -253,5 +288,5 @@ export function useTaskPolling(params: {
     };
   }, []);
 
-  return { startPollingTask };
+  return { startPollingTask, stopPollingTask };
 }
