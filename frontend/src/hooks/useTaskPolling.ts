@@ -115,11 +115,27 @@ export function useTaskPolling(params: {
         lastOutputCount = Math.max(lastOutputCount, outputCount);
         lastStatus = status;
 
-        const shouldSyncOutputs = outputCount > cachedOutputs.length || TERMINAL_SUCCESS.has(status) || TERMINAL_CANCELLED.has(status);
-        if (shouldSyncOutputs && outputCount > 0) {
+        const shouldSyncOutputs =
+          outputCount > cachedOutputs.length || TERMINAL_SUCCESS.has(status) || TERMINAL_CANCELLED.has(status);
+        const shouldFetchOutputs =
+          shouldSyncOutputs &&
+          (outputCount > 0 || TERMINAL_SUCCESS.has(status) || TERMINAL_CANCELLED.has(status));
+        if (shouldFetchOutputs) {
           const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
           cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes.items);
           lastOutputCount = Math.max(lastOutputCount, cachedOutputs.length);
+          if (process.env.NODE_ENV !== "production") {
+            // 临时排查日志：用于确认轮询阶段是否拉到了预览图链接
+            console.debug("[task-polling] outputs synced", {
+              taskId,
+              messageId,
+              status,
+              outputCount,
+              fetchedCount: outputRes.items.length,
+              mappedCount: cachedOutputs.length,
+              previewUrls: cachedOutputs.map((item) => item.preview_url || ""),
+            });
+          }
         }
 
         if (!TERMINAL_SUCCESS.has(status) && !TERMINAL_FAILED.has(status) && !TERMINAL_CANCELLED.has(status)) {
@@ -150,12 +166,7 @@ export function useTaskPolling(params: {
             progress_current: progressTotal || progressCurrent || message.progress_total || 0,
             progress_total: progressTotal || message.progress_total || 0,
             progress_message: progressMessage,
-            generated_outputs: cachedOutputs.length
-              ? cachedOutputs
-              : message.generated_outputs.map((output) => ({
-                  ...output,
-                  status: "failed",
-                })),
+            generated_outputs: cachedOutputs.length ? cachedOutputs : message.generated_outputs,
           }));
           return;
         }
