@@ -246,6 +246,7 @@ export default function ImageWorkbenchPage() {
   const currentMessageRef = useRef<HTMLElement | null>(null);
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
   const optimizedPromptPopoverRef = useRef<HTMLDivElement | null>(null);
+  const recoveringOutputMessageKeysRef = useRef<Set<string>>(new Set());
   const totalReferenceCount = useMemo(
     () =>
       Object.values(draft.references).reduce((sum, assets) => {
@@ -428,6 +429,43 @@ export default function ImageWorkbenchPage() {
       draft_by_conversation_id: draftByConversationId,
     });
   }, [activeConversationId, conversations, draftByConversationId, sessionId]);
+
+  useEffect(() => {
+    if (!conversations.length) return;
+
+    const candidates = conversations.flatMap((conversation) =>
+      conversation.messages
+        .filter((message) => message.task_id && message.generated_outputs.length === 0)
+        .map((message) => ({
+          conversationId: conversation.conversation_id,
+          messageId: message.id,
+          taskId: message.task_id as string,
+        })),
+    );
+
+    for (const candidate of candidates) {
+      const messageKey = `${candidate.conversationId}:${candidate.messageId}:${candidate.taskId}`;
+      if (recoveringOutputMessageKeysRef.current.has(messageKey)) continue;
+      recoveringOutputMessageKeysRef.current.add(messageKey);
+
+      void (async () => {
+        try {
+          const outputRes = await getTaskOutputs(candidate.taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
+          const outputs = mapTaskOutputsToGeneratedOutputs(candidate.taskId, outputRes?.items ?? []);
+          if (outputs.length > 0) {
+            updateMessageById(candidate.conversationId, candidate.messageId, (message) => ({
+              ...message,
+              generated_outputs: outputs,
+            }));
+          }
+        } catch {
+          // ignore compensation failures and keep current message state
+        } finally {
+          recoveringOutputMessageKeysRef.current.delete(messageKey);
+        }
+      })();
+    }
+  }, [conversations, updateMessageById]);
 
   useEffect(() => {
     if (!activeConversationId) return;
@@ -749,17 +787,15 @@ export default function ImageWorkbenchPage() {
         }));
 
         const task = await cancelTask(taskId);
-        const outputRes = task.output_count
-          ? await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE })
-          : null;
-        const outputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes?.items);
+        const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
+        const outputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes?.items ?? []);
         updateMessageById(conversationId, messageId, (message) => ({
           ...message,
           system_status: "cancelled",
           progress_current: task.progress_current ?? message.progress_current,
           progress_total: task.progress_total ?? message.progress_total,
           progress_message: task.message || "已停止",
-          generated_outputs: outputs.length ? outputs : message.generated_outputs,
+          generated_outputs: outputs,
         }));
       } catch (error) {
         updateMessageById(conversationId, messageId, (message) => ({
@@ -1213,18 +1249,16 @@ export default function ImageWorkbenchPage() {
                       </div>
                     )}
                     {showLoadingState ? (
-                      <div className="rounded-xl border border-slate-200/80 bg-white/75 p-2">
-                        <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                          {Array.from({ length: Math.max(1, message.progress_total || 2) }).map((_, placeholder) => (
-                            <div
-                              key={placeholder}
-                              className="animate-pulse rounded-lg border border-slate-200 bg-white p-1.5"
-                            >
-                              <div className="aspect-[4/3] w-full rounded-md border border-slate-200 bg-slate-100/80" />
-                              <div className="mt-1.5 h-2.5 w-2/3 rounded bg-slate-100" />
-                            </div>
-                          ))}
-                        </div>
+                      <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                        {Array.from({ length: 2 }).map((_, placeholder) => (
+                          <div
+                            key={placeholder}
+                            className="animate-pulse rounded-lg border border-slate-200 bg-white p-1.5"
+                          >
+                            <div className="aspect-[4/3] w-full rounded-md border border-slate-200 bg-slate-100/80" />
+                            <div className="mt-1.5 h-2.5 w-2/3 rounded bg-slate-100" />
+                          </div>
+                        ))}
                       </div>
                     ) : (
                       <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">

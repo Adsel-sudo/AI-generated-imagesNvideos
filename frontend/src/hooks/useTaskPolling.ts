@@ -69,10 +69,12 @@ export function useTaskPolling(params: {
     conversationId,
     messageId,
     taskId,
+    initialOutputs,
   }: {
     conversationId: string;
     messageId: string;
     taskId: string;
+    initialOutputs?: GeneratedOutput[];
   }) => {
     let lastProgressCurrent = 0;
     let lastProgressTotal = 0;
@@ -81,7 +83,7 @@ export function useTaskPolling(params: {
     let lastActivityAt = Date.now();
     let stallNotified = false;
     let unchangedCount = 0;
-    let cachedOutputs: GeneratedOutput[] = [];
+    let cachedOutputs: GeneratedOutput[] = initialOutputs ?? [];
     let consecutivePollErrors = 0;
 
     const getNextPollInterval = (status: string, unchanged: number) => {
@@ -190,7 +192,7 @@ export function useTaskPolling(params: {
             progress_message: isStalled
               ? POLL_STALL_NOTICE
               : progressMessage || (stallNotified ? POLL_STALL_NOTICE : message.progress_message),
-            generated_outputs: cachedOutputs.length ? cachedOutputs : message.generated_outputs,
+            generated_outputs: cachedOutputs,
           }));
 
           await sleep(getNextPollInterval(status, unchangedCount));
@@ -198,6 +200,9 @@ export function useTaskPolling(params: {
         }
 
         if (isTerminalSuccess) {
+          const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
+          if (cancelledTaskIdsRef.current.has(taskId)) return;
+          cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes.items);
           const finalOutputCount = Math.max(cachedOutputs.length, outputCount);
           const finalProgressTotal = Math.max(progressTotal, finalOutputCount);
           const finalProgressCurrent = Math.max(progressCurrent, finalOutputCount);
@@ -207,7 +212,7 @@ export function useTaskPolling(params: {
             progress_current: finalProgressCurrent || message.progress_current || 0,
             progress_total: finalProgressTotal || message.progress_total || 0,
             progress_message: progressMessage,
-            generated_outputs: cachedOutputs.length ? cachedOutputs : message.generated_outputs,
+            generated_outputs: cachedOutputs,
           }));
           return;
         }
@@ -219,7 +224,7 @@ export function useTaskPolling(params: {
             progress_current: progressCurrent || message.progress_current,
             progress_total: progressTotal || message.progress_total,
             progress_message: progressMessage || "已停止",
-            generated_outputs: cachedOutputs.length ? cachedOutputs : message.generated_outputs,
+            generated_outputs: cachedOutputs,
           }));
           return;
         }
@@ -237,7 +242,7 @@ export function useTaskPolling(params: {
             progress_current: progressCurrent || message.progress_current,
             progress_total: progressTotal || message.progress_total,
             progress_message: progressMessage,
-            generated_outputs: cachedOutputs.length ? cachedOutputs : message.generated_outputs,
+            generated_outputs: cachedOutputs,
           }));
           return;
         }
@@ -250,7 +255,7 @@ export function useTaskPolling(params: {
           ...message,
           system_status: reachedRetryLimit ? "error" : "processing",
           error_message: reachedRetryLimit ? getFriendlyErrorMessage("result_failed", error) : message.error_message,
-          generated_outputs: cachedOutputs.length ? cachedOutputs : message.generated_outputs,
+          generated_outputs: cachedOutputs,
         }));
 
         if (reachedRetryLimit) {
@@ -262,7 +267,12 @@ export function useTaskPolling(params: {
     }
   }, [mapTaskOutputsToGeneratedOutputs, updateMessageById]);
 
-  const startPollingTask = useCallback((task: { conversationId: string; messageId: string; taskId: string }) => {
+  const startPollingTask = useCallback((task: {
+    conversationId: string;
+    messageId: string;
+    taskId: string;
+    initialOutputs?: GeneratedOutput[];
+  }) => {
     cancelledTaskIdsRef.current.delete(task.taskId);
     if (pollingTaskIdsRef.current.has(task.taskId)) {
       return;
@@ -286,6 +296,7 @@ export function useTaskPolling(params: {
           conversationId: conversation.conversation_id,
           messageId: message.id,
           taskId: message.task_id,
+          initialOutputs: message.generated_outputs,
         });
       }
     }
