@@ -865,6 +865,14 @@ class GoogleImageProvider(BaseProvider):
                     break
 
                 index = len(results) + 1
+                if self._is_task_cancelled(str(task.id)):
+                    logger.info(
+                        "[provider=%s][stage=cancelled_before_save][task_id=%s][index=%s] stop before saving generated part",
+                        self.name,
+                        task.id,
+                        index,
+                    )
+                    return results
                 inline_data = getattr(part, "inline_data", None)
                 initial_mime_type = getattr(inline_data, "mime_type", None) or "image/png"
                 ext = mimetypes.guess_extension(initial_mime_type) or ".png"
@@ -891,6 +899,14 @@ class GoogleImageProvider(BaseProvider):
                     saved,
                     save_duration,
                 )
+                if self._is_task_cancelled(str(task.id)):
+                    logger.info(
+                        "[provider=%s][stage=cancelled_after_save][task_id=%s][index=%s] stop after saving generated part",
+                        self.name,
+                        task.id,
+                        index,
+                    )
+                    return results
                 if not saved:
                     continue
 
@@ -952,6 +968,14 @@ class GoogleImageProvider(BaseProvider):
                         task.id,
                         index,
                     )
+                if self._is_task_cancelled(str(task.id)):
+                    logger.info(
+                        "[provider=%s][stage=cancelled_after_output][task_id=%s][index=%s] stop before next output",
+                        self.name,
+                        task.id,
+                        index,
+                    )
+                    return results
 
         if not results:
             raise RuntimeError(

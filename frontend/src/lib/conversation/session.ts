@@ -9,11 +9,25 @@ import type { WorkbenchDraft } from "@/src/types/workbench";
 import { createEmptyWorkbenchDraft } from "@/src/types/workbench";
 
 export const STORAGE_KEYS = {
+  schemaVersion: "ai_image_workbench_schema_version",
   sessionId: "ai_image_workbench_session_id",
   conversations: "ai_image_workbench_conversations",
   activeConversationId: "ai_image_workbench_active_conversation_id",
   draftByConversationId: "ai_image_workbench_draft_by_conversation_id",
 } as const;
+
+const CURRENT_SCHEMA_VERSION = "2";
+
+const ensureStorageSchema = () => {
+  const storedVersion = localStorage.getItem(STORAGE_KEYS.schemaVersion);
+  if (storedVersion === CURRENT_SCHEMA_VERSION) return;
+
+  localStorage.removeItem(STORAGE_KEYS.sessionId);
+  localStorage.removeItem(STORAGE_KEYS.conversations);
+  localStorage.removeItem(STORAGE_KEYS.activeConversationId);
+  localStorage.removeItem(STORAGE_KEYS.draftByConversationId);
+  localStorage.setItem(STORAGE_KEYS.schemaVersion, CURRENT_SCHEMA_VERSION);
+};
 
 export const createId = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -56,7 +70,7 @@ export const createMessage = (payload: {
   task_id: payload.task_id,
   user_input: payload.user_input,
   system_status: payload.system_status,
-  generated_outputs: [createGeneratedOutputPlaceholder()],
+  generated_outputs: [],
   optimized_prompt: payload.optimized_prompt,
   size_text: payload.size_text,
   style_preference: payload.style_preference,
@@ -119,6 +133,7 @@ export const getOrCreateSessionId = (): string => {
 };
 
 export const loadConversationState = (): ConversationState => {
+  ensureStorageSchema();
   const session_id = getOrCreateSessionId();
   const conversations = parseConversations(localStorage.getItem(STORAGE_KEYS.conversations));
   const draft_by_conversation_id = parseDraftByConversationId(
