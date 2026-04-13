@@ -1166,6 +1166,28 @@ export default function ImageWorkbenchPage() {
                   const showLoadingState =
                     message.system_status === "processing" && displayOutputs.length === 0;
 
+                  console.log(
+                    "[render-debug]",
+                    JSON.stringify(
+                      {
+                        messageId: message.id,
+                        taskId: message.task_id,
+                        systemStatus: message.system_status,
+                        progressCurrent: message.progress_current,
+                        progressTotal: message.progress_total,
+                        generatedOutputs: message.generated_outputs,
+                        readyOutputs: message.generated_outputs.filter((item) => item.status === "ready"),
+                        displayOutputs: message.generated_outputs.filter(
+                          (item) =>
+                            item.status === "ready" &&
+                            Boolean(item.preview_url || item.modal_preview_url || item.url),
+                        ),
+                      },
+                      null,
+                      2,
+                    ),
+                  );
+
                   return (
                 <article
                   key={message.id}
