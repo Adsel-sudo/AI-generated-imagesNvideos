@@ -144,11 +144,13 @@ export function useTaskPolling(params: {
           if (isStalled) {
             stallNotified = true;
           }
+          const syncedProgressCurrent = Math.max(progressCurrent, cachedOutputs.length);
+          const syncedProgressTotal = Math.max(progressTotal, syncedProgressCurrent);
 
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
-            progress_current: progressCurrent,
-            progress_total: progressTotal,
+            progress_current: syncedProgressCurrent,
+            progress_total: syncedProgressTotal,
             progress_message: isStalled
               ? POLL_STALL_NOTICE
               : progressMessage || (stallNotified ? POLL_STALL_NOTICE : message.progress_message),
@@ -160,11 +162,14 @@ export function useTaskPolling(params: {
         }
 
         if (TERMINAL_SUCCESS.has(status)) {
+          const finalOutputCount = Math.max(cachedOutputs.length, outputCount);
+          const finalProgressTotal = Math.max(progressTotal, finalOutputCount);
+          const finalProgressCurrent = Math.max(progressCurrent, finalOutputCount);
           updateMessageById(conversationId, messageId, (message) => ({
             ...message,
             system_status: "done",
-            progress_current: progressTotal || progressCurrent || message.progress_total || 0,
-            progress_total: progressTotal || message.progress_total || 0,
+            progress_current: finalProgressCurrent || message.progress_current || 0,
+            progress_total: finalProgressTotal || message.progress_total || 0,
             progress_message: progressMessage,
             generated_outputs: cachedOutputs.length ? cachedOutputs : message.generated_outputs,
           }));
