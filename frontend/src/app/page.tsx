@@ -430,6 +430,25 @@ export default function ImageWorkbenchPage() {
     });
   }, [activeConversationId, conversations, draftByConversationId, sessionId]);
 
+  const updateMessageById = useCallback((
+    conversationId: string,
+    messageId: string,
+    updater: (message: Conversation["messages"][number]) => Conversation["messages"][number],
+  ) => {
+    setConversations((prev) =>
+      prev.map((conversation) => {
+        if (conversation.conversation_id !== conversationId) return conversation;
+        return {
+          ...conversation,
+          updated_at: Date.now(),
+          messages: conversation.messages.map((message) =>
+            message.id === messageId ? updater(message) : message,
+          ),
+        };
+      }),
+    );
+  }, []);
+
   useEffect(() => {
     if (!conversations.length) return;
 
@@ -750,25 +769,6 @@ export default function ImageWorkbenchPage() {
       promptInputRef.current?.focus();
     });
   };
-
-  const updateMessageById = useCallback((
-    conversationId: string,
-    messageId: string,
-    updater: (message: Conversation["messages"][number]) => Conversation["messages"][number],
-  ) => {
-    setConversations((prev) =>
-      prev.map((conversation) => {
-        if (conversation.conversation_id !== conversationId) return conversation;
-        return {
-          ...conversation,
-          updated_at: Date.now(),
-          messages: conversation.messages.map((message) =>
-            message.id === messageId ? updater(message) : message,
-          ),
-        };
-      }),
-    );
-  }, []);
 
   const { startPollingTask, stopPollingTask } = useTaskPolling({
     conversations,
