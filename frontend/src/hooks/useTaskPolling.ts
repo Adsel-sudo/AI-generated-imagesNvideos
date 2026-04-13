@@ -40,6 +40,7 @@ export function useTaskPolling(params: {
       preview_url?: string | null;
       thumbnail_url?: string | null;
       lowres_url?: string | null;
+      original_url?: string | null;
     }>,
   ) => GeneratedOutput[];
 }) {
@@ -131,7 +132,11 @@ export function useTaskPolling(params: {
           console.log("[poll task status normalized]", status);
         }
 
-        if (!TERMINAL_SUCCESS.has(status) && !TERMINAL_FAILED.has(status) && !TERMINAL_CANCELLED.has(status)) {
+        const completedByProgress =
+          cachedOutputs.length > 0 && progressTotal > 0 && progressCurrent >= progressTotal;
+        const isTerminalSuccess = TERMINAL_SUCCESS.has(status) || completedByProgress;
+
+        if (!isTerminalSuccess && !TERMINAL_FAILED.has(status) && !TERMINAL_CANCELLED.has(status)) {
           const idleDuration = Date.now() - lastActivityAt;
           const isStalled = idleDuration >= POLL_STALL_THRESHOLD_MS;
           if (isStalled) {
@@ -154,7 +159,7 @@ export function useTaskPolling(params: {
           continue;
         }
 
-        if (TERMINAL_SUCCESS.has(status)) {
+        if (isTerminalSuccess) {
           const finalOutputCount = Math.max(cachedOutputs.length, outputCount);
           const finalProgressTotal = Math.max(progressTotal, finalOutputCount);
           const finalProgressCurrent = Math.max(progressCurrent, finalOutputCount);

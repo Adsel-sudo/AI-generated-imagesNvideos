@@ -112,7 +112,7 @@ const mapTaskOutputsToGeneratedOutputs = (
       output.lowres_url ||
       output.original_url ||
       undefined;
-    const modalPreviewUrl = output.preview_url || thumbnailUrl;
+    const modalPreviewUrl = output.preview_url || output.thumbnail_url || output.original_url || thumbnailUrl;
     return {
       id: output.id,
       kind: "image" as const,

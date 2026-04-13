@@ -69,6 +69,7 @@ class OutputResponse(BaseModel):
     original_url: Optional[str] = None
     preview_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    lowres_url: Optional[str] = None
     created_at: datetime
 
 

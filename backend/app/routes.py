@@ -50,16 +50,20 @@ def _build_output_payload(task_id: str, output: Output) -> dict:
     preview_path = build_variant_path(original_path, "preview")
     thumbnail_path = build_variant_path(original_path, "thumbnail")
     payload = output.model_dump()
+    original_url = f"/api/tasks/{task_id}/outputs/{output.id}"
+    preview_url = f"/api/tasks/{task_id}/outputs/{output.id}?variant=preview" if preview_path.exists() else original_url
+    thumbnail_url = (
+        f"/api/tasks/{task_id}/outputs/{output.id}?variant=thumbnail" if thumbnail_path.exists() else original_url
+    )
     payload.update(
         {
             "original_path": str(original_path),
             "preview_path": str(preview_path) if preview_path.exists() else None,
             "thumbnail_path": str(thumbnail_path) if thumbnail_path.exists() else None,
-            "original_url": f"/api/tasks/{task_id}/outputs/{output.id}",
-            "preview_url": f"/api/tasks/{task_id}/outputs/{output.id}?variant=preview" if preview_path.exists() else None,
-            "thumbnail_url": f"/api/tasks/{task_id}/outputs/{output.id}?variant=thumbnail"
-            if thumbnail_path.exists()
-            else None,
+            "original_url": original_url,
+            "preview_url": preview_url,
+            "thumbnail_url": thumbnail_url,
+            "lowres_url": preview_url,
         }
     )
     return payload
@@ -404,6 +408,8 @@ def download_output(
     headers["Content-Type"] = media_type
     if download == 1:
         headers["Content-Disposition"] = _build_attachment_disposition(output_file.name)
+    else:
+        headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(output_file.name)}"
     return Response(status_code=200, headers=headers)
 
 
