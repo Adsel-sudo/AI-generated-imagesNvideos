@@ -1207,9 +1207,7 @@ export default function ImageWorkbenchPage() {
               <div className="space-y-2.5 pb-1">
                 {activeConversation?.messages.map((message, index) => {
                   const readyOutputs = message.generated_outputs.filter((item) => item.status === "ready");
-                  const displayOutputs = readyOutputs.filter((item) =>
-                    Boolean(item.preview_url || item.modal_preview_url || item.url),
-                  );
+                  const displayOutputs = readyOutputs;
                   const showLoadingState =
                     message.system_status === "processing" && displayOutputs.length === 0;
 
@@ -1225,11 +1223,7 @@ export default function ImageWorkbenchPage() {
                           progressTotal: message.progress_total,
                           generatedOutputs: message.generated_outputs,
                           readyOutputs: message.generated_outputs.filter((item) => item.status === "ready"),
-                          displayOutputs: message.generated_outputs.filter(
-                            (item) =>
-                              item.status === "ready" &&
-                              Boolean(item.preview_url || item.modal_preview_url || item.url),
-                          ),
+                          displayOutputs: message.generated_outputs.filter((item) => item.status === "ready"),
                         },
                         null,
                         2,

@@ -108,7 +108,7 @@ export function useTaskPolling(params: {
         const task = await getTaskDetail(taskId);
         if (cancelledTaskIdsRef.current.has(taskId)) return;
         consecutivePollErrors = 0;
-        const status = String(task.status || "").toLowerCase();
+        const status = String(task.status || "").trim().toLowerCase();
         console.log("[poll status snapshot]", {
           taskId,
           status,
@@ -156,43 +156,54 @@ export function useTaskPolling(params: {
           shouldSyncOutputs &&
           (outputCount > 0 || TERMINAL_SUCCESS.has(status) || TERMINAL_CANCELLED.has(status));
         if (shouldFetchOutputs) {
-          const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
-          if (cancelledTaskIdsRef.current.has(taskId)) return;
-          cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes.items);
-          lastOutputCount = Math.max(lastOutputCount, cachedOutputs.length);
-          if (taskId === "fb73bbe6-d8c6-48ff-b1e5-826e461d934d") {
+          try {
+            const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
+            if (cancelledTaskIdsRef.current.has(taskId)) return;
+            cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes.items);
+            lastOutputCount = Math.max(lastOutputCount, cachedOutputs.length);
+            if (taskId === "fb73bbe6-d8c6-48ff-b1e5-826e461d934d") {
+              console.log(
+                "[poll-debug-current]",
+                JSON.stringify(
+                  {
+                    taskId,
+                    taskStatus: task.status,
+                    progressCurrent,
+                    progressTotal,
+                    outputRes,
+                    cachedOutputs,
+                  },
+                  null,
+                  2,
+                ),
+              );
+            }
+            console.log("[poll raw outputRes]", outputRes);
+            console.log("[poll raw items]", outputRes?.items);
+            console.log("[poll mapped outputs]", cachedOutputs);
             console.log(
-              "[poll-debug-current]",
-              JSON.stringify(
-                {
-                  taskId,
-                  taskStatus: task.status,
-                  progressCurrent,
-                  progressTotal,
-                  outputRes,
-                  cachedOutputs,
-                },
-                null,
-                2,
-              ),
+              "[poll mapped outputs urls]",
+              cachedOutputs.map((item) => ({
+                id: item.id,
+                status: item.status,
+                preview_url: item.preview_url,
+                modal_preview_url: item.modal_preview_url,
+                url: item.url,
+              })),
             );
+            console.log("[poll cachedOutputs.length]", cachedOutputs.length);
+            console.log("[poll task status raw]", task.status);
+            console.log("[poll task status normalized]", status);
+          } catch (error) {
+            console.error("[poll-progress-fetch-outputs-error]", {
+              taskId,
+              conversationId,
+              messageId,
+              status,
+              outputCount,
+              error,
+            });
           }
-          console.log("[poll raw outputRes]", outputRes);
-          console.log("[poll raw items]", outputRes?.items);
-          console.log("[poll mapped outputs]", cachedOutputs);
-          console.log(
-            "[poll mapped outputs urls]",
-            cachedOutputs.map((item) => ({
-              id: item.id,
-              status: item.status,
-              preview_url: item.preview_url,
-              modal_preview_url: item.modal_preview_url,
-              url: item.url,
-            })),
-          );
-          console.log("[poll cachedOutputs.length]", cachedOutputs.length);
-          console.log("[poll task status raw]", task.status);
-          console.log("[poll task status normalized]", status);
         }
 
         const completedByProgress =
