@@ -106,7 +106,12 @@ const mapTaskOutputsToGeneratedOutputs = (
   outputs?.map((output) => {
     const originalUrl = output.original_url || getOutputDownloadUrl(taskId, output.id);
     const downloadUrl = getOutputDownloadUrl(taskId, output.id, { download: true });
-    const thumbnailUrl = output.thumbnail_url || output.preview_url || output.lowres_url || undefined;
+    const thumbnailUrl =
+      output.thumbnail_url ||
+      output.preview_url ||
+      output.lowres_url ||
+      output.original_url ||
+      undefined;
     const modalPreviewUrl = output.preview_url || thumbnailUrl;
     return {
       id: output.id,
@@ -1214,7 +1219,9 @@ export default function ImageWorkbenchPage() {
                             className="flex h-full flex-col rounded-lg border border-slate-200 bg-white p-1.5"
                           >
                             <div className="space-y-1.5">
-                              {output.preview_url ? (
+                              {(() => {
+                                const cardImageSrc = output.preview_url || output.modal_preview_url || output.url;
+                                return cardImageSrc ? (
                                 <button
                                   type="button"
                                   className="group relative block w-full overflow-hidden rounded-md border border-slate-200"
@@ -1223,7 +1230,7 @@ export default function ImageWorkbenchPage() {
                                 >
                                   <div className="aspect-[4/3] w-full overflow-hidden">
                                     <Image
-                                      src={output.preview_url}
+                                      src={cardImageSrc}
                                       alt="生成结果预览"
                                       width={768}
                                       height={576}
@@ -1232,11 +1239,12 @@ export default function ImageWorkbenchPage() {
                                     />
                                   </div>
                                 </button>
-                              ) : (
+                                ) : (
                                 <div className="flex aspect-[4/3] w-full items-center justify-center rounded-md border border-slate-200 bg-slate-100/70 text-xs text-slate-500">
                                   仅展示预览信息
                                 </div>
-                              )}
+                                );
+                              })()}
                               <button
                                 type="button"
                                 className="text-xs font-medium text-slate-500 transition hover:text-slate-700"

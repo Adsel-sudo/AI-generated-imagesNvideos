@@ -14,7 +14,7 @@ const POLL_STALL_THRESHOLD_MS = 90000;
 const POLL_STALL_NOTICE = "处理时间较长，请稍后在当前对话中继续查看（任务仍在进行）";
 const MAX_CONSECUTIVE_POLL_ERRORS = 3;
 const TASK_OUTPUTS_PAGE_SIZE = 30;
-const TERMINAL_SUCCESS = new Set(["succeeded", "completed", "done"]);
+const TERMINAL_SUCCESS = new Set(["succeeded", "completed", "done", "success", "finished", "complete"]);
 const TERMINAL_FAILED = new Set(["failed"]);
 const TERMINAL_CANCELLED = new Set(["cancelled"]);
 const ACTIVE_STATUSES = new Set(["pending", "running"]);
@@ -124,18 +124,11 @@ export function useTaskPolling(params: {
           const outputRes = await getTaskOutputs(taskId, { page: 1, page_size: TASK_OUTPUTS_PAGE_SIZE });
           cachedOutputs = mapTaskOutputsToGeneratedOutputs(taskId, outputRes.items);
           lastOutputCount = Math.max(lastOutputCount, cachedOutputs.length);
-          if (process.env.NODE_ENV !== "production") {
-            // 临时排查日志：用于确认轮询阶段是否拉到了预览图链接
-            console.debug("[task-polling] outputs synced", {
-              taskId,
-              messageId,
-              status,
-              outputCount,
-              fetchedCount: outputRes.items.length,
-              mappedCount: cachedOutputs.length,
-              previewUrls: cachedOutputs.map((item) => item.preview_url || ""),
-            });
-          }
+          console.log("[poll raw outputRes]", outputRes);
+          console.log("[poll raw items]", outputRes?.items);
+          console.log("[poll mapped outputs]", cachedOutputs);
+          console.log("[poll task status raw]", task.status);
+          console.log("[poll task status normalized]", status);
         }
 
         if (!TERMINAL_SUCCESS.has(status) && !TERMINAL_FAILED.has(status) && !TERMINAL_CANCELLED.has(status)) {
